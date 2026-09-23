@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { useAnalysisStore } from "@/store/analysisStore";
 import { useDebugStore } from "@/store/debugStore";
-import type { DebugStopReason } from "@/types";
+import type { DebugStopReason, DebugTraceEntry } from "@/types";
 
 function fmtAddr(a?: number | null): string {
 	return typeof a === "number" ? `0x${a.toString(16)}` : "";
@@ -273,13 +273,14 @@ function BottomTabs() {
 	const run = useDebugStore((s) => s.run);
 	const active = useDebugStore((s) => s.active);
 	const pid = useDebugStore((s) => s.pid);
-	const [tab, setTab] = useState<"stack" | "breakpoints" | "threads">(
-		"stack",
-	);
+	const [tab, setTab] = useState<
+		"stack" | "breakpoints" | "threads" | "trace"
+	>("stack");
 	const [threads, setThreads] = useState<{
 		pid: number | null;
 		ids: number[];
 	}>({ pid: null, ids: [] });
+	const [trace, setTrace] = useState<DebugTraceEntry[]>([]);
 
 	useEffect(() => {
 		if (tab !== "threads" || !active) return;
@@ -293,6 +294,24 @@ function BottomTabs() {
 			cancelled = true;
 		};
 	}, [tab, active, pid]);
+
+	useEffect(() => {
+		if (tab !== "trace") return;
+		let cancelled = false;
+		const poll = () => {
+			api.debugTrace()
+				.then((t) => {
+					if (!cancelled) setTrace(t);
+				})
+				.catch(() => {});
+		};
+		poll();
+		const id = setInterval(poll, 1000);
+		return () => {
+			cancelled = true;
+			clearInterval(id);
+		};
+	}, [tab]);
 
 	const threadIds = threads.pid === pid ? threads.ids : [];
 
@@ -317,6 +336,7 @@ function BottomTabs() {
 				{tabButton("stack", "Call stack", frames.length)}
 				{tabButton("breakpoints", "Breakpoints", breakpoints.length)}
 				{tabButton("threads", "Threads")}
+				{tabButton("trace", "Trace", trace.length)}
 			</div>
 			<div className="scroll-host min-h-0 flex-1 overflow-auto">
 				{tab === "stack" &&
@@ -366,6 +386,45 @@ function BottomTabs() {
 							{fmtAddr(t)}
 						</div>
 					))}
+				{tab === "trace" && (
+					<>
+						<div className="border-border text-muted-foreground flex items-center justify-between border-b px-2 py-1 text-[10px]">
+							<span>
+								Every launch/attach/continue/step stop, in
+								order.
+							</span>
+							<button
+								className="hover:text-foreground"
+								onClick={() =>
+									void api
+										.debugTraceClear()
+										.then(() => setTrace([]))
+								}
+							>
+								Clear
+							</button>
+						</div>
+						{trace.length === 0 && (
+							<Empty label="no stops recorded yet" />
+						)}
+						{trace.map((t, i) => (
+							<div
+								key={i}
+								className="hover:bg-accent flex items-center gap-2 px-2 py-0.5 font-mono text-[11px]"
+							>
+								<span className="text-muted-foreground w-6">
+									{i}
+								</span>
+								<span className="text-primary">
+									{fmtAddr(t.registers.pc)}
+								</span>
+								<span className="truncate">
+									{reasonLabel(t.reason)}
+								</span>
+							</div>
+						))}
+					</>
+				)}
 			</div>
 		</div>
 	);

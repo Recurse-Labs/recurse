@@ -7,11 +7,17 @@ import type {
 	AsmResult,
 	Backend,
 	BinaryInfo,
+	CallGraph,
 	ChatMessage,
 	DebugSnapshot,
+	DebugTraceEntry,
 	DecompileResult,
 	DeviceLoginInfo,
+	DiffResult,
+	Findings,
 	Function,
+	GeneratedReport,
+	GeneratedSignature,
 	Import,
 	LlmStatus,
 	ModelInfo,
@@ -20,6 +26,8 @@ import type {
 	R2String,
 	Recon,
 	FunctionGraph,
+	SemanticIndexResult,
+	SemanticSimilarResult,
 	Session,
 	Xref,
 } from "./types";
@@ -134,4 +142,30 @@ export const api = {
 			intervalSecs,
 			expiresInSecs,
 		}),
+
+	readBytes: (addr: number, len: number) =>
+		invoke<number[]>("read_bytes", { addr, len }),
+	writeBytes: (addr: number, bytes: number[]) =>
+		invoke<void>("write_bytes", { addr, bytes }),
+	findings: () => invoke<Findings>("findings"),
+	diffWith: (otherPath: string) =>
+		invoke<DiffResult>("diff_with", { otherPath }),
+	generateSignature: (addr: number) =>
+		invoke<GeneratedSignature>("generate_signature", { addr }),
+	semanticIndex: () => invoke<SemanticIndexResult>("semantic_index"),
+	semanticSimilar: (addr: number) =>
+		invoke<SemanticSimilarResult>("semantic_similar", { addr }),
+	callGraph: () => invoke<CallGraph>("call_graph"),
+	generateReport: () => invoke<GeneratedReport>("generate_report"),
+	exportProject: (name: string) => invoke<string>("export_project", { name }),
+	importProject: (zipPath: string) =>
+		invoke<Project>("import_project", { zipPath }),
+	pickZip: (title: string) =>
+		open({
+			multiple: false,
+			title,
+			filters: [{ name: "Zip", extensions: ["zip"] }],
+		}),
+	debugTrace: () => invoke<DebugTraceEntry[]>("debug_trace"),
+	debugTraceClear: () => invoke<void>("debug_trace_clear"),
 };

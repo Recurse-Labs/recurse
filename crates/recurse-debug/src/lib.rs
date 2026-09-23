@@ -30,6 +30,7 @@
 pub mod advanced;
 pub mod arch;
 pub mod error;
+pub mod gdb_remote;
 pub mod model;
 pub mod session;
 pub mod symbols;

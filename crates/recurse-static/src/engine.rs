@@ -440,6 +440,22 @@ pub trait Engine: Send + Sync {
     /// Resolve a symbol name to an address, if the backend knows it.
     fn resolve(&self, name: &str) -> Result<Option<u64>, String>;
 
+    /// Read `len` raw bytes at virtual address `addr` — the backing for the
+    /// hex view. Default: unsupported (a backend opts in by overriding).
+    fn read_bytes(&self, _addr: u64, _len: usize) -> Result<Vec<u8>, String> {
+        Err("read_bytes: not supported by this backend".to_string())
+    }
+
+    /// Patch `bytes` directly into the file on disk at virtual address
+    /// `addr` — the backing for in-place patching. Writes go straight to the
+    /// file; the running session's cached analysis (disassembly, functions,
+    /// decompile) is **not** re-derived from the patch, so a caller that
+    /// wants the patched bytes reflected in disassembly must reopen the
+    /// binary. Default: unsupported.
+    fn write_bytes(&self, _addr: u64, _bytes: &[u8]) -> Result<(), String> {
+        Err("write_bytes: not supported by this backend".to_string())
+    }
+
     /// Install analyst name overrides (`address -> name`), replacing any
     /// previous set. Backends apply them to `functions`, `function_at`,
     /// `resolve`, and disassembly annotation where they can, so a rename is

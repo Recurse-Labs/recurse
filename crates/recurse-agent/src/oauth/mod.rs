@@ -1,12 +1,15 @@
-//! OAuth 2.0 flows for the two subscription-gated providers Recurse
+//! OAuth 2.0 flows for the subscription-gated providers Recurse
 //! authenticates natively: [`anthropic`] (Claude Pro/Max, PKCE
-//! authorization-code flow) and [`github_copilot`] (a GitHub Copilot
-//! subscription, RFC 8628 device flow). See `crate::providers`' module
-//! doc for why only these two providers get a real OAuth implementation
-//! here, rather than every provider oh-my-pi/omp itself supports.
+//! authorization-code flow), [`github_copilot`] (a GitHub Copilot
+//! subscription, RFC 8628 device flow), and [`openai_codex`] (a ChatGPT
+//! Plus/Pro/Team subscription, OpenAI's own device-authorization flow).
+//! See `crate::providers`' module doc for why only these providers get
+//! a real OAuth implementation here, rather than every provider
+//! oh-my-pi/omp itself supports.
 
 pub mod anthropic;
 pub mod github_copilot;
+pub mod openai_codex;
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;

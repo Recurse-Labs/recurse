@@ -64,9 +64,10 @@ pub fn start_login() -> LoginStart {
     let authorize_url = format!(
         "{AUTHORIZE_URL}?code=true&response_type=code&client_id={CLIENT_ID}\
          &redirect_uri={redirect}&scope={scope}&code_challenge={challenge}\
-         &code_challenge_method=S256",
+         &code_challenge_method=S256&state={state}",
         redirect = urlencode(REDIRECT_URI),
         scope = urlencode(SCOPES),
+        state = urlencode(&verifier),
     );
     LoginStart {
         authorize_url,
@@ -157,6 +158,12 @@ pub fn split_pasted_code(pasted: &str) -> Option<(&str, &str)> {
 pub async fn exchange_code(pasted: &str, verifier: &str) -> Result<TokenSet, String> {
     let (code, state) = split_pasted_code(pasted)
         .ok_or_else(|| "expected the pasted value to look like \"code#state\"".to_string())?;
+    if state != verifier {
+        return Err(
+            "pasted state does not match this login; start login again and paste the new code"
+                .to_string(),
+        );
+    }
     let body = TokenRequest {
         grant_type: "authorization_code",
         code,
@@ -243,6 +250,9 @@ mod tests {
         assert!(login.authorize_url.contains("code_challenge="));
         assert!(login.authorize_url.contains("code_challenge_method=S256"));
         assert!(login.authorize_url.contains("response_type=code"));
+        assert!(login
+            .authorize_url
+            .contains(&format!("&state={}", login.verifier)));
         assert!(!login.verifier.is_empty());
     }
 
@@ -264,6 +274,15 @@ mod tests {
         assert_eq!(split_pasted_code("#xyz"), None, "empty code half");
         assert_eq!(split_pasted_code("abc#"), None, "empty state half");
         assert_eq!(split_pasted_code(""), None);
+    }
+
+    #[test]
+    fn exchange_code_rejects_a_state_that_does_not_match_this_login() {
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        let err = rt
+            .block_on(exchange_code("abc123#not-this-login", "verifier-we-sent"))
+            .expect_err("mismatched state must fail before any token request");
+        assert!(err.contains("does not match this login"), "{err}");
     }
 
     #[test]

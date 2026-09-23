@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { Moon, Sun } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -33,6 +34,8 @@ export function Header() {
 	const backend = useSettingsStore((s) => s.backend);
 	const setBackend = useSettingsStore((s) => s.setBackend);
 	const initBackend = useSettingsStore((s) => s.initBackend);
+	const theme = useSettingsStore((s) => s.theme);
+	const toggleTheme = useSettingsStore((s) => s.toggleTheme);
 
 	useEffect(() => {
 		void initBackend();
@@ -83,6 +86,18 @@ export function Header() {
 						Close
 					</Button>
 				)}
+				<Button
+					variant="ghost"
+					size="icon"
+					onClick={toggleTheme}
+					title={
+						theme === "dark"
+							? "Switch to light theme"
+							: "Switch to dark theme"
+					}
+				>
+					{theme === "dark" ? <Sun /> : <Moon />}
+				</Button>
 				<DropdownMenu>
 					<DropdownMenuTrigger asChild>
 						<Button variant="toolbar" size="sm">

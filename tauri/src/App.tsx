@@ -29,6 +29,7 @@ function App() {
 	useEffect(() => {
 		useLlmStore.getState().init();
 		useSettingsStore.getState().initZoom();
+		useSettingsStore.getState().initTheme();
 		useProjectStore.getState().loadProjects();
 	}, []);
 
@@ -136,6 +137,7 @@ function App() {
 			{binary && <StatusBar />}
 			<CommandPalette />
 			<NewProjectDialog />
+			<CommandPalette />
 		</div>
 	);
 }

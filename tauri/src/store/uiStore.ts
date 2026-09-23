@@ -14,6 +14,8 @@ interface UiState {
 	setErr: (e: string | null) => void;
 	newProjectOpen: boolean;
 	setNewProjectOpen: (b: boolean) => void;
+	modelPickerOpen: boolean;
+	setModelPickerOpen: (b: boolean) => void;
 }
 
 export const useUiStore = create<UiState>((set) => ({
@@ -28,4 +30,6 @@ export const useUiStore = create<UiState>((set) => ({
 	setErr: (err) => set({ err }),
 	newProjectOpen: false,
 	setNewProjectOpen: (newProjectOpen) => set({ newProjectOpen }),
+	modelPickerOpen: false,
+	setModelPickerOpen: (modelPickerOpen) => set({ modelPickerOpen }),
 }));

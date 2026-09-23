@@ -2668,6 +2668,75 @@ impl Engine for NativeEngine {
         }
         Ok(suffix)
     }
+
+    fn read_bytes(&self, addr: u64, len: usize) -> Result<Vec<u8>, String> {
+        if len == 0 {
+            return Ok(Vec::new());
+        }
+        let file = self.parse()?;
+        for section in file.sections() {
+            let start = section.address();
+            let end = start.saturating_add(section.size());
+            if addr < start || addr.saturating_add(len as u64) > end {
+                continue;
+            }
+            let data = section
+                .data()
+                .map_err(|e| format!("read section data: {e}"))?;
+            let off = (addr - start) as usize;
+            let off_end = off.saturating_add(len);
+            if off_end > data.len() {
+                // Past the section's file-backed bytes (e.g. tail of .bss) —
+                // keep looking; another section may cover it exactly.
+                continue;
+            }
+            return Ok(data[off..off_end].to_vec());
+        }
+        Err(format!(
+            "0x{addr:x}: no section covers {len} byte(s) at this address"
+        ))
+    }
+
+    fn write_bytes(&self, addr: u64, bytes: &[u8]) -> Result<(), String> {
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        let len = bytes.len() as u64;
+        let file = self.parse()?;
+        let mut file_offset = None;
+        for section in file.sections() {
+            let start = section.address();
+            let end = start.saturating_add(section.size());
+            if addr < start || addr.saturating_add(len) > end {
+                continue;
+            }
+            let (sec_file_off, sec_file_len) = section.file_range().ok_or_else(|| {
+                format!(
+                    "0x{addr:x}: section '{}' has no file-backed bytes (e.g. .bss) — cannot patch",
+                    section.name().unwrap_or("?")
+                )
+            })?;
+            let rel = addr - start;
+            if rel.saturating_add(len) > sec_file_len {
+                continue;
+            }
+            file_offset = Some(sec_file_off + rel);
+            break;
+        }
+        let file_offset = file_offset.ok_or_else(|| {
+            format!("0x{addr:x}: no section covers {len} byte(s) at this address")
+        })?;
+        use std::io::{Seek, SeekFrom, Write};
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&self.path)
+            .map_err(|e| format!("open {} for writing: {e}", self.path.display()))?;
+        f.seek(SeekFrom::Start(file_offset))
+            .map_err(|e| format!("seek to 0x{file_offset:x}: {e}"))?;
+        f.write_all(bytes)
+            .map_err(|e| format!("write {} byte(s) at 0x{file_offset:x}: {e}", bytes.len()))?;
+        Ok(())
+    }
 }
 
 /// The reference kind a branch instruction carries, for xref labels.
@@ -2830,6 +2899,103 @@ fn demangle(name: &str) -> String {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
+
+    /// Copy the running test binary to a temp path so `write_bytes` has a
+    /// real, disposable ELF/PE/Mach-O to patch (never patches the test
+    /// harness's own on-disk binary).
+    fn temp_copy_of_self() -> PathBuf {
+        let src = std::env::current_exe().expect("current test executable path");
+        let mut dst = std::env::temp_dir();
+        dst.push(format!(
+            "recurse-native-engine-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::copy(&src, &dst).expect("copy test binary to a scratch path");
+        dst
+    }
+
+    #[test]
+    fn read_bytes_matches_the_file_on_disk() {
+        let path = temp_copy_of_self();
+        let engine = NativeEngine::open(&path).expect("open native engine");
+        let funcs = engine.functions().expect("functions");
+        let entry = funcs
+            .first()
+            .expect("at least one discovered function")
+            .addr;
+        let want = engine
+            .disassemble(&Target::Addr(entry), Some(1))
+            .expect("disasm");
+        let first_op = &want.ops[0];
+        let want_len = first_op.len as usize;
+        assert!(want_len > 0, "first instruction must report a byte length");
+
+        let got = engine
+            .read_bytes(entry, want_len)
+            .expect("read_bytes at the function entry");
+        assert_eq!(got.len(), want_len);
+        let want_bytes = first_op
+            .bytes
+            .as_deref()
+            .expect("disasm carries the instruction's own hex bytes");
+        let want_bytes = (0..want_bytes.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&want_bytes[i..i + 2], 16).unwrap())
+            .collect::<Vec<u8>>();
+        assert_eq!(
+            got, want_bytes,
+            "read_bytes must match the disassembled instruction's own bytes"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn write_bytes_patches_the_file_on_disk_only() {
+        let path = temp_copy_of_self();
+        let engine = NativeEngine::open(&path).expect("open native engine");
+        let funcs = engine.functions().expect("functions");
+        let entry = funcs
+            .first()
+            .expect("at least one discovered function")
+            .addr;
+        let original = engine.read_bytes(entry, 4).expect("read original bytes");
+
+        // A patch that is provably different from whatever was there,
+        // regardless of architecture or original content.
+        let patch: Vec<u8> = original.iter().map(|b| b.wrapping_add(1)).collect();
+        engine
+            .write_bytes(entry, &patch)
+            .expect("write_bytes at the function entry");
+
+        // The in-memory session (`self.data`) is documented as not
+        // reflecting the patch — read_bytes still returns the pre-patch
+        // bytes from the cached buffer.
+        let cached = engine.read_bytes(entry, 4).expect("read cached bytes");
+        assert_eq!(
+            cached, original,
+            "write_bytes must not mutate the cached in-memory analysis"
+        );
+
+        // The file on disk, opened fresh, must carry the patch.
+        let reopened = NativeEngine::open(&path).expect("reopen native engine");
+        let on_disk = reopened.read_bytes(entry, 4).expect("read patched bytes");
+        assert_eq!(on_disk, patch, "write_bytes must patch the file on disk");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn read_bytes_rejects_an_address_with_no_covering_section() {
+        let path = temp_copy_of_self();
+        let engine = NativeEngine::open(&path).expect("open native engine");
+        assert!(engine.read_bytes(0xffff_ffff_0000_0000, 4).is_err());
+        let _ = std::fs::remove_file(&path);
+    }
 
     #[test]
     fn scan_finds_ascii_and_utf16() {

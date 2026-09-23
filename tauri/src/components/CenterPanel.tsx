@@ -33,6 +33,22 @@ const GraphPanel = lazy(() =>
 	import("@/components/GraphPanel").then((m) => ({ default: m.GraphPanel })),
 );
 
+const CallGraphPanel = lazy(() =>
+	import("@/components/CallGraphPanel").then((m) => ({
+		default: m.CallGraphPanel,
+	})),
+);
+
+const FindingsPanel = lazy(() =>
+	import("@/components/FindingsPanel").then((m) => ({
+		default: m.FindingsPanel,
+	})),
+);
+
+const HexPanel = lazy(() =>
+	import("@/components/HexPanel").then((m) => ({ default: m.HexPanel })),
+);
+
 function fmtAddr(a?: number | null) {
 	return typeof a === "number" ? `0x${a.toString(16)}` : "";
 }
@@ -191,6 +207,76 @@ export function CenterPanel() {
 	const setPending = useContextStore((s) => s.setPending);
 	const commitPending = useContextStore((s) => s.commitPending);
 
+	// Signature-generation / semantic-similarity results for the selected
+	// function, shown inline below the disasm toolbar until dismissed.
+	const [toolResult, setToolResult] = useState<{
+		title: string;
+		lines: string[];
+	} | null>(null);
+	const [toolBusy, setToolBusy] = useState(false);
+
+	const runGenerateSignature = async () => {
+		if (!selected) return;
+		setToolBusy(true);
+		try {
+			const sig = await api.generateSignature(selected.addr);
+			setToolResult({
+				title: `Signature: ${sig.name}`,
+				lines: [
+					sig.pattern,
+					`${sig.concrete_byte_count}/${sig.byte_count} concrete bytes`,
+				],
+			});
+		} catch (e) {
+			setToolResult({ title: "Signature failed", lines: [String(e)] });
+		} finally {
+			setToolBusy(false);
+		}
+	};
+
+	const runIndexBinary = async () => {
+		setToolBusy(true);
+		try {
+			const res = await api.semanticIndex();
+			setToolResult({
+				title: "Indexed for similarity search",
+				lines: [
+					`${res.indexed} functions added — corpus now holds ${res.corpus_size.toLocaleString()}`,
+				],
+			});
+		} catch (e) {
+			setToolResult({ title: "Indexing failed", lines: [String(e)] });
+		} finally {
+			setToolBusy(false);
+		}
+	};
+
+	const runShowSimilar = async () => {
+		if (!selected) return;
+		setToolBusy(true);
+		try {
+			const res = await api.semanticSimilar(selected.addr);
+			setToolResult({
+				title: `Similar functions (corpus: ${res.corpus_size.toLocaleString()})`,
+				lines:
+					res.matches.length === 0
+						? [
+								'No matches. Use "Index" (this binary, or others opened previously) to populate the corpus first.',
+							]
+						: res.matches.map(
+								(m) =>
+									`${(m.similarity * 100).toFixed(0)}%  ${m.name} @ 0x${m.address.toString(16)}  (${m.binary})`,
+							),
+			});
+		} catch (e) {
+			setToolResult({
+				title: "Similarity search failed",
+				lines: [String(e)],
+			});
+		} finally {
+			setToolBusy(false);
+		}
+	};
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const selectedAddr = selected?.addr;
 	const [consoleMounted, setConsoleMounted] = useState(false);
@@ -392,6 +478,33 @@ export function CenterPanel() {
 						<Button
 							variant="toolbar"
 							size="sm"
+							onClick={() => void runGenerateSignature()}
+							disabled={!selected || toolBusy}
+							title="Generate a wildcarded byte-pattern signature for this function"
+						>
+							Sig
+						</Button>
+						<Button
+							variant="toolbar"
+							size="sm"
+							onClick={() => void runShowSimilar()}
+							disabled={!selected || toolBusy}
+							title="Find similar functions in the cross-binary corpus"
+						>
+							Similar
+						</Button>
+						<Button
+							variant="toolbar"
+							size="sm"
+							onClick={() => void runIndexBinary()}
+							disabled={toolBusy}
+							title="Index every function of this binary into the similarity corpus"
+						>
+							Index
+						</Button>
+						<Button
+							variant="toolbar"
+							size="sm"
 							onClick={refreshDisasm}
 							disabled={asmLoading}
 							title="Reload"
@@ -400,6 +513,32 @@ export function CenterPanel() {
 						</Button>
 					</div>
 				</div>
+				)}
+			{toolResult && (
+				<div className="border-border bg-muted/30 flex items-start justify-between gap-3 border-b px-3 py-2">
+					<div className="min-w-0 flex-1">
+						<div className="text-xs font-semibold">
+							{toolResult.title}
+						</div>
+						{toolResult.lines.map((l, i) => (
+							<div
+								key={i}
+								className="text-muted-foreground mt-0.5 max-w-full truncate font-mono text-[11px]"
+								title={l}
+							>
+								{l}
+							</div>
+						))}
+					</div>
+					<Button
+						variant="toolbar"
+						size="sm"
+						onClick={() => setToolResult(null)}
+						title="Dismiss"
+					>
+						Dismiss
+					</Button>
+				</div>
 			)}
 
 			<div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -407,6 +546,36 @@ export function CenterPanel() {
 					<ReconPanel key={binaryPath} />
 				) : tab === "debug" ? (
 					<DebugPanel />
+				) : tab === "callgraph" ? (
+					<Suspense
+						fallback={
+							<div className="text-muted-foreground px-3 py-3 text-xs">
+								loading call graph…
+							</div>
+						}
+					>
+						<CallGraphPanel />
+					</Suspense>
+				) : tab === "findings" ? (
+					<Suspense
+						fallback={
+							<div className="text-muted-foreground px-3 py-3 text-xs">
+								loading findings…
+							</div>
+						}
+					>
+						<FindingsPanel />
+					</Suspense>
+				) : tab === "hex" ? (
+					<Suspense
+						fallback={
+							<div className="text-muted-foreground px-3 py-3 text-xs">
+								loading hex view…
+							</div>
+						}
+					>
+						<HexPanel />
+					</Suspense>
 				) : tab === "disasm" && viewMode === "graph" && selected ? (
 					<Suspense
 						fallback={

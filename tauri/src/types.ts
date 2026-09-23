@@ -130,7 +130,15 @@ export interface DecompileResult {
 }
 
 export type CenterTab =
-	"recon" | "disasm" | "strings" | "imports" | "console" | "debug";
+	| "recon"
+	| "disasm"
+	| "strings"
+	| "imports"
+	| "console"
+	| "debug"
+	| "findings"
+	| "hex"
+	| "callgraph";
 
 export interface ModelInfo {
 	id: string;
@@ -339,4 +347,172 @@ export interface Session {
 	model: string;
 	created_at: number;
 	updated_at: number;
+}
+
+// ---------------------------------------------------------------------------
+// Findings: capa capabilities, C++ classes, driver IOCTLs, firmware, DWARF.
+// ---------------------------------------------------------------------------
+
+export interface CapaMatch {
+	name: string;
+	namespace: string;
+	description: string;
+}
+
+export interface VirtualFunctionInfo {
+	slot: number;
+	address: number;
+	name: string | null;
+}
+
+export interface ClassInfo {
+	name: string;
+	vtable_address: number;
+	address_point: number;
+	typeinfo_address: number | null;
+	bases: string[];
+	virtual_functions: VirtualFunctionInfo[];
+}
+
+export interface FirmwareMatch {
+	offset: number;
+	signature: string;
+}
+
+export interface DwarfParameterInfo {
+	name: string;
+	ty: string;
+}
+
+export interface DwarfFunctionInfo {
+	name: string;
+	low_pc: number | null;
+	high_pc: number | null;
+	return_type: string | null;
+	parameters: DwarfParameterInfo[];
+}
+
+export interface DriverIoctl {
+	function_addr: number;
+	function_name: string;
+	compare_addr: number;
+	handler_addr: number | null;
+	code: {
+		raw: number;
+		device_type: number;
+		function: number;
+		method: string;
+		access: string;
+	};
+}
+
+export interface Findings {
+	capabilities: CapaMatch[];
+	classes: ClassInfo[];
+	firmware: FirmwareMatch[];
+	dwarf_functions: DwarfFunctionInfo[];
+	driver_ioctls: DriverIoctl[];
+	driver_ioctls_truncated: boolean;
+	scanned_functions: number;
+	total_functions: number;
+}
+
+// ---------------------------------------------------------------------------
+// Binary diff.
+// ---------------------------------------------------------------------------
+
+export interface DiffMatch {
+	a: number;
+	b: number;
+	name_a: string;
+	name_b: string;
+	confidence: number;
+	method: "exact" | "fuzzy";
+}
+
+export interface DiffAddrName {
+	addr: number;
+	name: string;
+}
+
+export interface DiffResult {
+	matched: DiffMatch[];
+	removed: DiffAddrName[];
+	added: DiffAddrName[];
+	a_function_count: number;
+	b_function_count: number;
+}
+
+// ---------------------------------------------------------------------------
+// Signature generation + cross-binary semantic similarity.
+// ---------------------------------------------------------------------------
+
+export interface GeneratedSignature {
+	name: string;
+	addr: number;
+	pattern: string;
+	byte_count: number;
+	concrete_byte_count: number;
+}
+
+export interface SemanticMatch {
+	binary: string;
+	name: string;
+	address: number;
+	similarity: number;
+}
+
+export interface SemanticSimilarResult {
+	query_addr: number;
+	corpus_size: number;
+	matches: SemanticMatch[];
+}
+
+export interface SemanticIndexResult {
+	indexed: number;
+	corpus_size: number;
+}
+
+// ---------------------------------------------------------------------------
+// Whole-binary call graph.
+// ---------------------------------------------------------------------------
+
+export interface CallGraphNode {
+	addr: number;
+	name: string;
+	is_leaf: boolean;
+	is_called: boolean;
+}
+
+export interface CallGraphEdge {
+	from: number;
+	to: number;
+}
+
+export interface CallGraph {
+	nodes: CallGraphNode[];
+	edges: CallGraphEdge[];
+	truncated: boolean;
+	total_functions: number;
+}
+
+// ---------------------------------------------------------------------------
+// Report export.
+// ---------------------------------------------------------------------------
+
+export interface GeneratedReport {
+	path: string;
+	markdown: string;
+	finding_count: number;
+}
+
+// ---------------------------------------------------------------------------
+// Debug call/stop trace.
+// ---------------------------------------------------------------------------
+
+export interface DebugTraceEntry {
+	pid: number;
+	thread: number;
+	reason: DebugStopReason;
+	registers: DebugRegisters;
 }

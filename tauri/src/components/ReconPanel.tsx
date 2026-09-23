@@ -1,6 +1,7 @@
 import { Loader2 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
+import { Button } from "@/components/ui/button";
 import { api } from "@/api";
 import { useBinaryStore } from "@/store/binaryStore";
 import type { Recon } from "@/types";
@@ -103,6 +104,23 @@ export function ReconPanel() {
 	const [recon, setRecon] = useState<Recon | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [loading, setLoading] = useState(true);
+	const [reportStatus, setReportStatus] = useState<string | null>(null);
+	const [reportBusy, setReportBusy] = useState(false);
+
+	const exportReport = async () => {
+		setReportBusy(true);
+		setReportStatus(null);
+		try {
+			const res = await api.generateReport();
+			setReportStatus(
+				`${res.finding_count} finding${res.finding_count === 1 ? "" : "s"} written to ${res.path}`,
+			);
+		} catch (e) {
+			setReportStatus(`Report failed: ${String(e)}`);
+		} finally {
+			setReportBusy(false);
+		}
+	};
 
 	useEffect(() => {
 		let cancelled = false;
@@ -147,7 +165,24 @@ export function ReconPanel() {
 
 	return (
 		<div className="scroll-host min-h-0 flex-1 overflow-auto px-4 py-3">
-			<h2 className="mb-3 text-lg font-bold tracking-tight">Overview</h2>
+			<div className="mb-3 flex items-center justify-between">
+				<h2 className="text-lg font-bold tracking-tight">Overview</h2>
+				<div className="flex items-center gap-2">
+					{reportStatus && (
+						<span className="text-muted-foreground max-w-sm truncate text-[11px]">
+							{reportStatus}
+						</span>
+					)}
+					<Button
+						size="sm"
+						variant="outline"
+						onClick={() => void exportReport()}
+						disabled={reportBusy}
+					>
+						{reportBusy ? "Generating…" : "Export report"}
+					</Button>
+				</div>
+			</div>
 
 			<Section title="Info">
 				<div className="grid grid-cols-1 gap-1.5 lg:grid-cols-2 xl:grid-cols-3">

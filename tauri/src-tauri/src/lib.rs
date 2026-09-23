@@ -1,8 +1,11 @@
+pub mod analysis_extra;
 pub mod commands;
 pub mod config;
 pub mod db;
 pub mod debug;
+pub mod debug_trace;
 pub mod engine;
+pub mod export;
 pub mod project;
 pub mod providers;
 pub mod renames;
@@ -58,6 +61,11 @@ pub struct AppState {
     pub current_session: Mutex<Option<String>>,
     /// Active debug session, created by `debug launch`/`attach`.
     pub debug: Arc<Mutex<Option<Arc<recurse_debug::Debugger>>>>,
+    /// Bounded log of every stop event a debug session produced this run
+    /// (launch/attach/continue/step), oldest first — a call/API trace
+    /// timeline distinct from the live single-stop `Snapshot`. Capped at
+    /// [`debug_trace::MAX_TRACE_ENTRIES`]; older entries drop first.
+    pub debug_trace: Arc<Mutex<std::collections::VecDeque<serde_json::Value>>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -96,6 +104,7 @@ pub fn run() {
             project: Mutex::new(None),
             current_session: Mutex::new(None),
             debug: Arc::new(Mutex::new(None)),
+            debug_trace: Arc::new(Mutex::new(std::collections::VecDeque::new())),
         })
         .invoke_handler(tauri::generate_handler![
             commands::open_binary,
@@ -154,6 +163,19 @@ pub fn run() {
             commands::project_read_file,
             commands::project_write_file,
             commands::project_list_files,
+            commands::read_bytes,
+            commands::write_bytes,
+            crate::analysis_extra::findings,
+            crate::analysis_extra::diff_with,
+            crate::analysis_extra::generate_signature,
+            crate::analysis_extra::semantic_index,
+            crate::analysis_extra::semantic_similar,
+            crate::analysis_extra::call_graph,
+            crate::export::generate_report,
+            crate::export::export_project,
+            crate::export::import_project,
+            crate::debug_trace::debug_trace,
+            crate::debug_trace::debug_trace_clear,
         ]);
 
     die_on_failure(builder.run(tauri::generate_context!()));

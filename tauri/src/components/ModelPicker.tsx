@@ -30,6 +30,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useLlmStore } from "@/store/llmStore";
 import { useProviderStore } from "@/store/providerStore";
+import { useUiStore } from "@/store/uiStore";
 import type { ModelInfo, ProviderStatus } from "@/types";
 
 type SortMode = "default" | "price-asc" | "price-desc";
@@ -41,6 +42,17 @@ function priceOf(m: ModelInfo): number {
 
 function fmtPrice(m: ModelInfo): string {
 	return `$${(priceOf(m) * 1_000_000).toFixed(2)}/M`;
+}
+/** Trigger-button label: the active provider's short name plus the
+ * current model, so the picker communicates both at a glance instead of
+ * just a bare model id. */
+function selectedActiveLabel(
+	providers: ProviderStatus[],
+	model: string,
+): string {
+	const active = providers.find((p) => p.is_active);
+	if (!active) return model || "select model";
+	return model ? `${active.name} · ${model}` : active.name;
 }
 
 function groupLabel(p: ProviderStatus): string {
@@ -405,7 +417,8 @@ export function ModelPicker() {
 	const refreshProviders = useProviderStore((s) => s.refresh);
 	const cancelLogin = useProviderStore((s) => s.cancelLogin);
 
-	const [open, setOpen] = useState(false);
+	const open = useUiStore((s) => s.modelPickerOpen);
+	const setOpen = useUiStore((s) => s.setModelPickerOpen);
 	const [query, setQuery] = useState("");
 	const [sort, setSort] = useState<SortMode>("default");
 	const [customModel, setCustomModel] = useState("");
@@ -481,9 +494,9 @@ export function ModelPicker() {
 				<Button
 					variant="toolbar"
 					size="sm"
-					className="max-w-[180px] truncate"
+					className="max-w-[220px] truncate"
 				>
-					{model || "select model"}
+					{selectedActiveLabel(providers, model)}
 					<span className="text-muted-foreground">▾</span>
 				</Button>
 			</DialogTrigger>

@@ -1,10 +1,13 @@
 import {
 	Bug,
 	Code2,
+	FileSearch,
+	FileText,
 	Info,
 	MessageSquare,
 	Package,
 	Quote,
+	Share2,
 	Terminal,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -23,9 +26,12 @@ interface View {
 const VIEWS: View[] = [
 	{ tab: "recon", icon: Info, label: "Recon" },
 	{ tab: "disasm", icon: Code2, label: "Disassembly" },
+	{ tab: "callgraph", icon: Share2, label: "Call Graph" },
 	{ tab: "debug", icon: Bug, label: "Debug" },
 	{ tab: "strings", icon: Quote, label: "Strings" },
 	{ tab: "imports", icon: Package, label: "Imports" },
+	{ tab: "findings", icon: FileSearch, label: "Findings" },
+	{ tab: "hex", icon: FileText, label: "Hex" },
 	{ tab: "console", icon: Terminal, label: "Console" },
 ];
 

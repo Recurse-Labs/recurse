@@ -6,9 +6,14 @@ import { cn } from "@/lib/utils";
 import { useAnalysisStore } from "@/store/analysisStore";
 import { useBinaryStore } from "@/store/binaryStore";
 import { useDebugStore } from "@/store/debugStore";
+import { useProjectStore } from "@/store/projectStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useUiStore } from "@/store/uiStore";
-import type { CenterTab } from "@/types";
+import type { CenterTab, Function } from "@/types";
+
+function fmtAddr(a: number): string {
+	return `0x${a.toString(16)}`;
+}
 
 interface Command {
 	id: string;
@@ -19,10 +24,13 @@ interface Command {
 
 const TAB_LABEL: Record<CenterTab, string> = {
 	recon: "Recon",
-	debug: "Debug",
 	disasm: "Disassembly",
+	callgraph: "Call Graph",
 	strings: "Strings",
 	imports: "Imports",
+	findings: "Findings",
+	hex: "Hex view",
+	debug: "Debug",
 	console: "Console",
 };
 
@@ -44,28 +52,40 @@ function buildCommands(): Command[] {
 				});
 			},
 		},
+		{
+			id: "model-picker",
+			title: "Switch model / provider…",
+			run: () => ui.setModelPickerOpen(true),
+		},
 	];
+	if (!bin.binary) {
+		cmds.push({
+			id: "new-project",
+			title: "New project…",
+			run: () => ui.setNewProjectOpen(true),
+		});
+	}
 	if (bin.binary) {
 		cmds.push({
 			id: "close",
-			title: "Close binary",
-			run: () => void bin.closeBinary(),
+			title: "Close project",
+			run: () => void useProjectStore.getState().close(),
 		});
-	}
-	for (const tab of Object.keys(TAB_LABEL) as CenterTab[]) {
+		for (const tab of Object.keys(TAB_LABEL) as CenterTab[]) {
+			cmds.push({
+				id: `tab-${tab}`,
+				title: `Go to ${TAB_LABEL[tab]}`,
+				run: () => ui.setTab(tab),
+			});
+		}
 		cmds.push({
-			id: `tab-${tab}`,
-			title: `Go to ${TAB_LABEL[tab]}`,
-			run: () => ui.setTab(tab),
-		});
-	}
-	cmds.push(
-		{
 			id: "chat",
 			title: "Toggle agent chat",
 			hint: "Ctrl+L",
 			run: () => ui.toggleChat(),
-		},
+		});
+	}
+	cmds.push(
 		{
 			id: "engine-native",
 			title: "Analysis engine: native (pure Rust)",
@@ -75,6 +95,11 @@ function buildCommands(): Command[] {
 			id: "engine-r2",
 			title: "Analysis engine: r2",
 			run: () => void settings.setBackend("r2"),
+		},
+		{
+			id: "toggle-theme",
+			title: "Toggle light / dark theme",
+			run: () => settings.toggleTheme(),
 		},
 	);
 
@@ -148,15 +173,25 @@ function gotoQuery(query: string): void {
 	if (match) analysis.selectFn(match);
 }
 
+type Entry =
+	| { kind: "command"; command: Command }
+	| { kind: "function"; fn: Function };
+
 /**
- * Ctrl+K command palette: open a binary, jump to a tab, drive the debugger, or
- * type an address/symbol to go there. The one place that reaches every action.
+ * Ctrl+K command palette: open a binary, jump to a tab or function, drive the
+ * debugger, or type an address/symbol to go there. The one place that reaches
+ * every action. Mounted once at the app root; owns its own open state and
+ * global keydown listener.
  */
 export function CommandPalette() {
 	const [open, setOpen] = useState(false);
 	const [query, setQuery] = useState("");
 	const [active, setActive] = useState(0);
 	const listRef = useRef<HTMLDivElement>(null);
+
+	const binary = useBinaryStore((s) => s.binary);
+	const funcs = useAnalysisStore((s) => s.funcs);
+	const selectFn = useAnalysisStore((s) => s.selectFn);
 
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
@@ -172,16 +207,37 @@ export function CommandPalette() {
 	}, []);
 
 	const commands = useMemo(() => (open ? buildCommands() : []), [open]);
-	const filtered = useMemo(() => {
-		const q = query.trim().toLowerCase();
-		if (!q) return commands;
-		return commands.filter((c) => c.title.toLowerCase().includes(q));
-	}, [commands, query]);
+
+	const q = query.trim().toLowerCase();
+
+	const matchedFunctions = useMemo(() => {
+		if (!q || !binary) return [];
+		return funcs
+			.filter((f) => (f.name ?? "").toLowerCase().includes(q))
+			.slice(0, 30);
+	}, [funcs, q, binary]);
+
+	const matchedCommands = useMemo(
+		() =>
+			q
+				? commands.filter((c) => c.title.toLowerCase().includes(q))
+				: commands,
+		[commands, q],
+	);
+
+	const entries: Entry[] = [
+		...matchedFunctions.map((fn) => ({ kind: "function" as const, fn })),
+		...matchedCommands.map((command) => ({
+			kind: "command" as const,
+			command,
+		})),
+	];
 
 	const close = () => setOpen(false);
-	const run = (c: Command) => {
+	const runEntry = (entry: Entry) => {
 		close();
-		c.run();
+		if (entry.kind === "command") entry.command.run();
+		else selectFn(entry.fn);
 	};
 
 	const onKeyDown = (e: React.KeyboardEvent) => {
@@ -190,14 +246,14 @@ export function CommandPalette() {
 			close();
 		} else if (e.key === "ArrowDown") {
 			e.preventDefault();
-			setActive((a) => Math.min(a + 1, filtered.length - 1));
+			setActive((a) => Math.min(a + 1, entries.length - 1));
 		} else if (e.key === "ArrowUp") {
 			e.preventDefault();
 			setActive((a) => Math.max(a - 1, 0));
 		} else if (e.key === "Enter") {
 			e.preventDefault();
-			const c = filtered[active];
-			if (c) run(c);
+			const entry = entries[active];
+			if (entry) runEntry(entry);
 			else if (query.trim()) {
 				close();
 				gotoQuery(query);
@@ -223,18 +279,31 @@ export function CommandPalette() {
 						setActive(0);
 					}}
 					onKeyDown={onKeyDown}
-					placeholder="Type a command, address, or symbol…"
+					placeholder={
+						binary
+							? "type a function name, address, or command…"
+							: "type a command…"
+					}
 					className="placeholder:text-muted-foreground/60 w-full bg-transparent px-3.5 py-3 text-sm outline-none"
 				/>
 				<div
 					ref={listRef}
 					className="border-border scroll-host min-h-0 overflow-auto border-t p-1"
 				>
-					{filtered.map((c, i) => (
+					{entries.length === 0 && query.trim() === "" && (
+						<div className="text-muted-foreground px-3 py-6 text-center text-xs">
+							No commands.
+						</div>
+					)}
+					{entries.map((entry, i) => (
 						<button
-							key={c.id}
+							key={
+								entry.kind === "command"
+									? entry.command.id
+									: `fn-${entry.fn.addr}`
+							}
 							onMouseEnter={() => setActive(i)}
-							onClick={() => run(c)}
+							onClick={() => runEntry(entry)}
 							className={cn(
 								chrome.row,
 								"w-full rounded text-left text-sm",
@@ -243,15 +312,31 @@ export function CommandPalette() {
 									: "hover:bg-accent",
 							)}
 						>
-							<span className="truncate">{c.title}</span>
-							{c.hint && (
-								<span className="text-kbd text-2xs ml-auto">
-									{c.hint}
-								</span>
+							{entry.kind === "command" ? (
+								<>
+									<span className="truncate">
+										{entry.command.title}
+									</span>
+									{entry.command.hint && (
+										<span className="text-kbd text-2xs ml-auto">
+											{entry.command.hint}
+										</span>
+									)}
+								</>
+							) : (
+								<>
+									<span className="min-w-0 flex-1 truncate">
+										{entry.fn.name ??
+											`sub_${entry.fn.addr.toString(16)}`}
+									</span>
+									<span className="text-muted-foreground ml-auto font-mono text-2xs">
+										{fmtAddr(entry.fn.addr)}
+									</span>
+								</>
 							)}
 						</button>
 					))}
-					{filtered.length === 0 && query.trim() && (
+					{entries.length === 0 && query.trim() && (
 						<button
 							onClick={() => {
 								close();

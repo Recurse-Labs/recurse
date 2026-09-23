@@ -23,6 +23,11 @@ tauri-build = { version = "2", features = [] }
 # Independent agent framework (LLM loop, tool runtime). No Tauri
 # dependency, no config/storage access — builds and tests standalone.
 recurse-agent = { path = "../../crates/recurse-agent" }
+# Direct dependency (not just via recurse-agent's re-export) for the host-
+# side findings/diff/hex-patch/call-graph glue, which needs modules
+# recurse-agent deliberately does not re-export (capa, cpp, diff, driver,
+# dwarf, firmware, semantic_memory, sig — it only needs `engine`/`native`).
+recurse-static = { path = "../../crates/recurse-static" }
 recurse-debug = { path = "../../crates/recurse-debug" }
 # sync primitives only (Mutex); the async runtime comes from Tauri.
 tokio = { version = "1", features = ["sync"] }
@@ -44,6 +49,8 @@ crc32fast = "1"
 regex = "1"
 walkdir = "2"
 wait-timeout = "0.2"
+# Project export/import (zip a project's files + metadata for handoff).
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = { version = "2.0", features = ["v2_40"] }
