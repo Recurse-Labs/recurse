@@ -82,7 +82,17 @@ pub fn run() {
 
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_dialog::init());
+
+    // Self-update: desktop only (the updater/process plugins have no
+    // mobile implementation). Configured in `tauri.conf.json` under
+    // `plugins.updater` (endpoint + pubkey) — see docs/updating.md.
+    #[cfg(desktop)]
+    let builder = builder
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build());
+
+    let builder = builder
         .setup(|app| {
             crate::sessions::cleanup_legacy();
             disable_pinch_zoom(app);

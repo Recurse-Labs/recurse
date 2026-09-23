@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { RefreshCw, Settings } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -18,7 +19,7 @@ import { useBinaryStore } from "@/store/binaryStore";
 import { useProjectStore } from "@/store/projectStore";
 import { useUiStore } from "@/store/uiStore";
 import { useSettingsStore } from "@/store/settingsStore";
-
+import { useUpdateStore } from "@/store/updateStore";
 export function Header() {
 	const binary = useBinaryStore((s) => s.binary);
 	const busy = useBinaryStore((s) => s.busy);
@@ -33,12 +34,44 @@ export function Header() {
 	const backend = useSettingsStore((s) => s.backend);
 	const setBackend = useSettingsStore((s) => s.setBackend);
 	const initBackend = useSettingsStore((s) => s.initBackend);
+	const updateStatus = useUpdateStore((s) => s.status);
+	const availableVersion = useUpdateStore((s) => s.availableVersion);
+	const updateProgress = useUpdateStore((s) => s.progress);
+	const checkForUpdates = useUpdateStore((s) => s.checkForUpdates);
+	const installAndRestart = useUpdateStore((s) => s.installAndRestart);
 
 	useEffect(() => {
 		void initBackend();
 	}, [initBackend]);
 
 	const zoomPct = Math.round(Math.pow(1.2, zoomLevel) * 100);
+	const updateAvailable = updateStatus === "available";
+
+	function updateLabel(): string {
+		switch (updateStatus) {
+			case "checking":
+				return "Checking for updates…";
+			case "available":
+				return `Update to v${availableVersion} — restart to install`;
+			case "downloading":
+				return updateProgress != null
+					? `Downloading update… ${updateProgress}%`
+					: "Downloading update…";
+			case "restarting":
+				return "Restarting…";
+			case "up-to-date":
+				return "You're up to date";
+			case "error":
+				return "Update check failed — retry";
+			default:
+				return "Check for updates";
+		}
+	}
+
+	function onUpdateClick() {
+		if (updateAvailable) void installAndRestart();
+		else void checkForUpdates();
+	}
 
 	return (
 		<header className="border-border bg-card ui-bar border-b px-3">
@@ -85,8 +118,20 @@ export function Header() {
 				)}
 				<DropdownMenu>
 					<DropdownMenuTrigger asChild>
-						<Button variant="toolbar" size="sm">
-							Settings
+						<Button
+							variant="ghost"
+							size="icon"
+							title={
+								updateAvailable
+									? `Update available: v${availableVersion}`
+									: "Settings"
+							}
+							className="relative"
+						>
+							<Settings />
+							{updateAvailable && (
+								<span className="bg-primary absolute top-1 right-1 h-2 w-2 rounded-full" />
+							)}
 						</Button>
 					</DropdownMenuTrigger>
 					<DropdownMenuContent align="end" className="min-w-56">
@@ -123,6 +168,25 @@ export function Header() {
 						>
 							<span className="flex-1">radare2</span>
 							<span className="text-2xs opacity-70">opt-in</span>
+						</DropdownMenuItem>
+						<DropdownMenuSeparator />
+						<DropdownMenuItem
+							onClick={onUpdateClick}
+							disabled={
+								updateStatus === "checking" ||
+								updateStatus === "downloading" ||
+								updateStatus === "restarting"
+							}
+						>
+							<RefreshCw
+								className={
+									updateStatus === "checking" ||
+									updateStatus === "downloading"
+										? "animate-spin"
+										: undefined
+								}
+							/>
+							{updateLabel()}
 						</DropdownMenuItem>
 					</DropdownMenuContent>
 				</DropdownMenu>

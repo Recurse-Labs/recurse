@@ -110,6 +110,31 @@ purpose-built environment, not a chatbot wrapper:
 - **Malware-safe by default.** Local-first, BYO-key/OpenRouter routing, and a path
   to offline models — no forced exfil of samples to a cloud chatbot.
 
+## Install
+
+**macOS / Linux:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Recurse-Labs/recurse/master/scripts/install.sh | sh
+```
+
+**Windows (PowerShell):**
+
+```powershell
+powershell -c "irm https://raw.githubusercontent.com/Recurse-Labs/recurse/master/scripts/install.ps1 | iex"
+```
+
+Each script grabs the right bundle from the
+[latest release](https://github.com/Recurse-Labs/recurse/releases/latest) for your OS/arch
+and installs it natively (`.deb`/`.rpm`/`.AppImage` on Linux, `.dmg` → `/Applications` on
+macOS, `.msi`/`.exe` on Windows). Prefer a manual download? Grab the asset for your platform
+from the [Releases page](https://github.com/Recurse-Labs/recurse/releases) instead.
+
+Once installed, Recurse updates itself — no reinstalling for new versions. It checks for
+updates on launch and offers a one-click **"Update to vX.Y.Z"** from the ⚙ menu; see
+[docs/updating.md](docs/updating.md). Building from source instead? Skip to
+[Prerequisites](#prerequisites) below.
+
 ## Prerequisites
 
 ### 1. Core toolchains
@@ -184,6 +209,11 @@ The bundle lands in `target/release/bundle/` (workspace target):
 On Arch and other rolling distros the AppImage step needs a one-time local fix
 (upstream `linuxdeploy` lags the distro toolchain) — see
 [docs/linux-appimage-build.md](docs/linux-appimage-build.md).
+
+Local builds don't ship signed updater artifacts (that requires the
+`TAURI_SIGNING_PRIVATE_KEY` secret, set only in CI) and won't self-update —
+expected for a source build. See [docs/releasing.md](docs/releasing.md) for
+how tagged releases are built, signed, and published.
 
 ### Just the frontend (no desktop shell)
 
