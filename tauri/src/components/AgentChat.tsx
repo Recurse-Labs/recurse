@@ -6,13 +6,10 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { api } from "@/api";
 import { Markdown } from "@/components/Markdown";
+import { ToolCallCard } from "@/components/ToolCallCard";
 import { ModelPicker } from "@/components/ModelPicker";
 import { useLlmStore } from "@/store/llmStore";
-import {
-	useAgentStore,
-	type ToolCallUi,
-	type UiBlock,
-} from "@/store/agentStore";
+import { useAgentStore, type UiBlock } from "@/store/agentStore";
 import { useContextStore } from "@/store/contextStore";
 import { useSessionStore } from "@/store/sessionStore";
 
@@ -28,42 +25,6 @@ function fmtDate(secs: number): string {
 
 interface Props {
 	inputRef?: RefObject<HTMLTextAreaElement | null>;
-}
-
-function ToolCallChip({ call }: { call: ToolCallUi }) {
-	const [open, setOpen] = useState(false);
-	const running = call.result === undefined;
-	return (
-		<div className="border-border/60 bg-muted/30 text-muted-foreground rounded border px-2 py-1 text-xs">
-			<button
-				className="flex w-full min-w-0 items-center gap-1.5 text-left"
-				onClick={() => setOpen((o) => !o)}
-			>
-				<span className="shrink-0 font-mono font-semibold">
-					{call.name}
-				</span>
-				{call.arguments && (
-					<span className="text-muted-foreground/70 min-w-0 flex-1 truncate font-mono">
-						{call.arguments.slice(0, 40)}
-					</span>
-				)}
-				<span className="shrink-0">
-					{running ? (
-						<span className="text-primary animate-pulse">…</span>
-					) : open ? (
-						"Hide"
-					) : (
-						"Show"
-					)}
-				</span>
-			</button>
-			{open && call.result !== undefined && (
-				<pre className="text-muted-foreground text-2xs mt-1 max-h-40 overflow-auto pt-1 font-mono break-words whitespace-pre-wrap">
-					{call.result}
-				</pre>
-			)}
-		</div>
-	);
 }
 
 export function AgentChat({ inputRef }: Props) {
@@ -224,7 +185,7 @@ export function AgentChat({ inputRef }: Props) {
 						<div key={m.id}>
 							{m.role === "user" ? (
 								<div className="flex justify-end">
-									<div className="bg-primary text-primary-foreground max-w-[92%] rounded-lg px-2.5 py-2 text-xs leading-relaxed break-words whitespace-pre-wrap">
+									<div className="bg-secondary text-secondary-foreground max-w-[92%] rounded-lg px-2.5 py-2 text-xs leading-relaxed break-words whitespace-pre-wrap">
 										{m.blocks
 											.filter((b) => b.kind === "content")
 											.map((b) =>
@@ -240,7 +201,7 @@ export function AgentChat({ inputRef }: Props) {
 														(ref, i) => (
 															<span
 																key={i}
-																className="bg-primary-foreground/15 text-2xs rounded px-1 py-px font-mono"
+																className="bg-foreground/10 text-2xs rounded px-1 py-px font-mono"
 															>
 																{ref}
 															</span>
@@ -332,20 +293,12 @@ export function AgentChat({ inputRef }: Props) {
 }
 
 function ReasoningBlock({ text }: { text: string }) {
-	const [show, setShow] = useState(true);
 	return (
 		<div className="border-primary/50 text-muted-foreground mb-1.5 border-l-2 pl-2">
-			<button
-				className="text-2xs flex items-center gap-1 tracking-wider uppercase"
-				onClick={() => setShow((s) => !s)}
-			>
-				{show ? "Hide" : "Show"} thinking
-			</button>
-			{show && (
-				<div className="text-muted-foreground/80 mt-1 break-words whitespace-pre-wrap">
-					{text}
-				</div>
-			)}
+			<div className="text-2xs tracking-wider uppercase">Thinking</div>
+			<div className="text-muted-foreground/80 mt-1 break-words whitespace-pre-wrap">
+				{text}
+			</div>
 		</div>
 	);
 }
@@ -370,8 +323,8 @@ function AssistantMessage({
 						return <ReasoningBlock key={i} text={b.text} />;
 					case "tool_call":
 						return (
-							<div key={i} className="mb-1.5">
-								<ToolCallChip call={b.call} />
+							<div key={i} className="mb-2">
+								<ToolCallCard call={b.call} />
 							</div>
 						);
 					case "content":
