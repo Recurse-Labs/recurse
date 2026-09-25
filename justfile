@@ -44,6 +44,10 @@ test-rs:
 test-fe:
     cd tauri && npm run test:fe
 
+# Downloads a pinned large release and compares native output with objdump and r2pipe.
+test-large-binary:
+    cargo test -p recurse-static --test large_binary_consistency -- --ignored --nocapture
+
 # --- evals (see crates/recurse-eval/README.md) ---
 eval-fetch:
     cargo run -p recurse-eval --bin fetch-corpus

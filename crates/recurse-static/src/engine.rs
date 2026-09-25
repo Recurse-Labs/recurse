@@ -390,6 +390,57 @@ pub trait Engine: Send + Sync {
     /// The function containing `addr`, if any.
     fn function_at(&self, addr: u64) -> Result<Option<FunctionInfo>, String>;
 
+    /// Collect direct call edges, plus a recovered startup entry-to-`main`
+    /// relationship, from at most `max_functions` discovered functions,
+    /// returning at most `max_edges` unique edges. The default is
+    /// deliberately bounded by the caller because whole-binary UI requests
+    /// must not decode an unbounded function list. Backends with an
+    /// already-built reference index should override it.
+    ///
+    /// ```
+    /// use recurse_static::engine::Engine;
+    /// // The implementation is supplied by the selected backend at runtime.
+    /// let _ = std::marker::PhantomData::<&dyn Engine>;
+    /// ```
+    fn call_edges(
+        &self,
+        max_functions: usize,
+        max_edges: usize,
+    ) -> Result<Vec<(u64, u64)>, String> {
+        if max_functions == 0 || max_edges == 0 {
+            return Ok(Vec::new());
+        }
+        let funcs = self.functions()?;
+        let known: std::collections::HashSet<u64> = funcs.iter().map(|f| f.addr).collect();
+        let mut edges = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for f in funcs.into_iter().take(max_functions) {
+            if edges.len() >= max_edges {
+                break;
+            }
+            let Ok(dis) = self.function_disasm(f.addr) else {
+                continue;
+            };
+            for op in dis.ops {
+                if !matches!(op.kind.as_deref(), Some("call") | Some("icall")) {
+                    continue;
+                }
+                let Some(target) = op.jump else { continue };
+                if target != f.addr
+                    && known.contains(&target)
+                    && edges.len() < max_edges
+                    && seen.insert((f.addr, target))
+                {
+                    edges.push((f.addr, target));
+                    if edges.len() >= max_edges {
+                        break;
+                    }
+                }
+            }
+        }
+        Ok(edges)
+    }
+
     /// Disassemble `count` instructions starting at `target` (following the
     /// function when `count` is `None`).
     fn disassemble(&self, target: &Target, count: Option<usize>) -> Result<Disassembly, String>;

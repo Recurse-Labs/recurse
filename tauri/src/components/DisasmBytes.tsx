@@ -100,6 +100,9 @@ export function DisasmBytes({
 	loading,
 	error,
 	showAscii,
+	canShowMore = false,
+	showAll = false,
+	onShowMore,
 }: {
 	address: number;
 	bytes: number[];
@@ -107,6 +110,9 @@ export function DisasmBytes({
 	loading: boolean;
 	error: string | null;
 	showAscii: boolean;
+	canShowMore?: boolean;
+	showAll?: boolean;
+	onShowMore?: () => void;
 }) {
 	const rows: { address: number; bytes: number[] }[] = [];
 	for (let i = 0; i < bytes.length; i += 16) {
@@ -119,13 +125,24 @@ export function DisasmBytes({
 		<div className="border-border bg-card font-mono text-[11px]">
 			<div className="text-muted-foreground border-border text-2xs flex items-center justify-between border-b px-3 py-1 font-semibold tracking-wider uppercase">
 				<span>Section bytes</span>
-				<span>
-					{loading
-						? "loading…"
-						: error
-							? error
-							: `${shown} / ${total} bytes shown`}
-				</span>
+				<div className="flex items-center gap-3">
+					<span>
+						{loading
+							? "loading…"
+							: error
+								? error
+								: `${shown} / ${total} bytes shown`}
+					</span>
+					{canShowMore && onShowMore && (
+						<button
+							type="button"
+							className="text-primary hover:text-primary/80 tracking-normal normal-case"
+							onClick={onShowMore}
+						>
+							{showAll ? "Show less" : "Show more"}
+						</button>
+					)}
+				</div>
 			</div>
 			{rows.map((row) => (
 				<div

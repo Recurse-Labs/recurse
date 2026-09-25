@@ -124,3 +124,7 @@ Because the engine is a trait:
   separate program (mere aggregation), never linked. Its code is isolated in
   its own modules and only runs when it is selected — so a distribution can
   omit it without touching the rest of the tree.
+- The opt-in large-binary consistency test also invokes `r2`/`objdump` as
+  separate oracle processes. It contains no r2pipe, radare2, or binutils code
+  and does not bundle those tools. The downloaded Youki fixture is not stored
+  in the repository.

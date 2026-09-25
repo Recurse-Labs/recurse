@@ -112,6 +112,9 @@ struct NativeState {
     /// Referenced address -> indexes into [`NativeState::xrefs`], so a
     /// `xrefs to X` is a hash lookup instead of a full decode.
     xrefs_by_target: HashMap<u64, Vec<u32>>,
+    /// Startup entry and the `main` pointer it passes to the C runtime, when
+    /// the pointer was recovered from the entry stub.
+    entry_main: Option<(u64, u64)>,
     /// True while the background indexer is still expanding the function set.
     indexing: bool,
 }
@@ -137,6 +140,7 @@ impl NativeState {
             renames: HashMap::new(),
             xrefs: Vec::new(),
             xrefs_by_target: HashMap::new(),
+            entry_main: None,
             indexing: false,
         }
     }
@@ -310,13 +314,37 @@ impl NativeEngine {
         }
         let file = self.parse()?;
         let cs = build_capstone(&file)?;
-        let blocks = decode_blocks(&file, &cs, func_addr)?;
+        let mut blocks = decode_blocks(&file, &cs, func_addr)?;
+        self.trim_function_blocks(func_addr, &mut blocks);
         let mut state = self
             .state
             .lock()
             .map_err(|e| format!("native state poisoned: {e}"))?;
         state.blocks.insert(func_addr, blocks.clone());
         Ok(blocks)
+    }
+
+    /// Remove decoded blocks that belong to a neighbouring function when a
+    /// tail jump crosses a discovered function boundary.
+    fn trim_function_blocks(&self, entry: u64, blocks: &mut Vec<BasicBlock>) {
+        let Ok(state) = self.state.lock() else {
+            return;
+        };
+        let Some(size) = state.functions.get(&entry).and_then(|f| f.size) else {
+            return;
+        };
+        let end = entry.saturating_add(size);
+        for block in blocks.iter_mut() {
+            block.ops.retain(|op| {
+                op.len > 0
+                    && op.addr >= entry
+                    && op
+                        .addr
+                        .checked_add(op.len as u64)
+                        .is_some_and(|next| next <= end)
+            });
+        }
+        blocks.retain(|block| !block.ops.is_empty());
     }
 
     /// Run discovery: seed from symbols + entry, then follow direct call
@@ -349,12 +377,14 @@ impl NativeEngine {
             }
         }
         let entry = code_addr(&file, file.entry());
+        let mut entry_main = None;
         if entry != 0 && NativeEngine::in_text(&file, entry) {
             add_function(&mut functions, &file, entry, "entry0".to_string());
             // Stripped binaries often expose only the entry, which passes `main`
             // to libc as a pointer rather than calling it directly.
             if let Some(main) = entry_main_seed(&file, &cs, entry) {
                 add_function(&mut functions, &file, main, "main".to_string());
+                entry_main = Some((entry, main));
             }
         }
         // A linear sweep adds every direct call target, CET landing pad, and
@@ -418,6 +448,7 @@ impl NativeEngine {
             state.functions = functions;
             state.xrefs = refs;
             state.xrefs_by_target = xrefs_by_target;
+            state.entry_main = entry_main;
             state.fde_sized = fde_sized;
             state.analyzed = true;
             state.indexing = true;
@@ -723,7 +754,10 @@ fn in_data_ranges(ranges: &[(u64, u64)], addr: u64) -> bool {
 /// Name of the function containing `addr`, from the current state. Used by
 /// cross-reference queries, which already hold the state lock.
 fn fcn_name_at(state: &NativeState, addr: u64) -> Option<String> {
-    let (_, f) = state.functions.range(..=addr).next_back()?;
+    let f = state
+        .functions
+        .get(&addr)
+        .or_else(|| state.functions.range(..=addr).next_back().map(|(_, f)| f))?;
     let contains = f
         .size
         .map_or(addr == f.addr, |s| addr < f.addr.saturating_add(s));
@@ -2363,6 +2397,81 @@ impl Engine for NativeEngine {
             .collect())
     }
 
+    /// Collect call edges from the sweep's sorted reference index instead of
+    /// disassembling every function again. This keeps a whole-binary request
+    /// proportional to the number of indexed references rather than to the
+    /// number of functions times their instruction counts.
+    fn call_edges(
+        &self,
+        max_functions: usize,
+        max_edges: usize,
+    ) -> Result<Vec<(u64, u64)>, String> {
+        self.discover()?;
+        if max_functions == 0 || max_edges == 0 {
+            return Ok(Vec::new());
+        }
+        let state = self
+            .state
+            .lock()
+            .map_err(|e| format!("native state poisoned: {e}"))?;
+        let known: HashSet<u64> = state.functions.keys().copied().collect();
+        let functions: Vec<(&u64, Option<u64>)> = state
+            .functions
+            .iter()
+            .take(max_functions)
+            .map(|(addr, f)| (addr, f.size))
+            .collect();
+        let mut edges = Vec::new();
+        let mut function_index = 0usize;
+        let mut seen = HashSet::new();
+        if let Some((entry, main)) = state.entry_main {
+            if known.contains(&entry)
+                && known.contains(&main)
+                && seen.insert((entry, main))
+                && edges.len() < max_edges
+            {
+                edges.push((entry, main));
+            }
+        }
+        let last_selected_end = functions.last().and_then(|(addr, size)| {
+            size.filter(|length| *length > 0)
+                .map(|length| addr.saturating_add(length))
+        });
+        for reference in &state.xrefs {
+            if reference.kind != "CALL" {
+                continue;
+            }
+            if edges.len() >= max_edges
+                || last_selected_end.is_some_and(|end| reference.from >= end)
+            {
+                break;
+            }
+            while function_index + 1 < functions.len()
+                && functions[function_index].1.is_some_and(|size| {
+                    reference.from >= functions[function_index].0.saturating_add(size)
+                })
+            {
+                function_index += 1;
+            }
+            let Some((source, size)) = functions.get(function_index) else {
+                break;
+            };
+            let contains = reference.from >= **source
+                && size.map_or(reference.from == **source, |length| {
+                    reference.from < source.saturating_add(length)
+                });
+            if contains
+                && reference.to != **source
+                && known.contains(&reference.to)
+                && edges.len() < max_edges
+                && seen.insert((**source, reference.to))
+            {
+                edges.push((**source, reference.to));
+            }
+        }
+        Ok(edges)
+    }
+
     fn set_renames(&self, renames: std::collections::HashMap<u64, String>) {
         if let Ok(mut state) = self.state.lock() {
             state.renames = renames;
@@ -2377,7 +2486,13 @@ impl Engine for NativeEngine {
             .state
             .lock()
             .map_err(|e| format!("native state poisoned: {e}"))?;
-        // The containing function is the greatest entry <= addr.
+        // Prefer an exact discovered entry. Function boundaries can overlap
+        // briefly while discovery grows the index; the exact entry is the
+        // function the analyst selected, not its predecessor.
+        if let Some(function) = state.functions.get(&addr) {
+            return Ok(Some(apply_rename(&state, function)));
+        }
+        // Otherwise, use the greatest entry <= addr that contains it.
         Ok(state
             .functions
             .range(..=addr)
@@ -2420,7 +2535,8 @@ impl Engine for NativeEngine {
         self.discover()?;
         let func = self.function_at(addr)?;
         let entry = func.as_ref().map(|f| f.addr).unwrap_or(addr);
-        let blocks = self.blocks_for(entry)?;
+        let mut blocks = self.blocks_for(entry)?;
+        self.trim_function_blocks(entry, &mut blocks);
         let mut ops: Vec<Instruction> = blocks.into_iter().flat_map(|b| b.ops).collect();
         ops.sort_by_key(|o| o.addr);
         ops.dedup_by_key(|o| o.addr);
@@ -2441,6 +2557,7 @@ impl Engine for NativeEngine {
         let func = self.function_at(addr)?;
         let entry = func.as_ref().map(|f| f.addr).unwrap_or(addr);
         let mut blocks = self.blocks_for(entry)?;
+        self.trim_function_blocks(entry, &mut blocks);
         for block in &mut blocks {
             self.annotate_ops(&mut block.ops);
         }
@@ -2916,6 +3033,24 @@ mod tests {
         ));
         std::fs::copy(&src, &dst).expect("copy test binary to a scratch path");
         dst
+    }
+
+    #[test]
+    fn call_edges_are_bounded_deduplicated_and_index_backed() {
+        let path = temp_copy_of_self();
+        let engine = NativeEngine::open(&path).expect("open native engine");
+        let functions = engine.functions().expect("functions");
+        let edges = engine.call_edges(2, 16).expect("call edges");
+        assert!(edges.len() <= 16);
+        let known: HashSet<u64> = functions.iter().map(|f| f.addr).collect();
+        assert!(edges
+            .iter()
+            .all(|(from, to)| { *from != *to && known.contains(from) && known.contains(to) }));
+        let unique: HashSet<(u64, u64)> = edges.iter().copied().collect();
+        assert_eq!(unique.len(), edges.len());
+        assert!(engine.call_edges(0, 16).expect("empty cap").is_empty());
+        assert!(engine.call_edges(2, 0).expect("empty edge cap").is_empty());
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

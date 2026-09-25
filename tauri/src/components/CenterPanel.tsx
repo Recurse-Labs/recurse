@@ -1,4 +1,4 @@
-import { ChevronRight, Loader2 } from "lucide-react";
+import { ChevronRight, FilePlus2, Loader2, X } from "lucide-react";
 import {
 	lazy,
 	Suspense,
@@ -29,6 +29,7 @@ import {
 	type DisasmViewOptions,
 } from "@/components/DisasmBytes";
 import { PanelErrorBoundary } from "@/components/PanelErrorBoundary";
+import { FUNCTION_DRAG_TYPE } from "@/components/FunctionList";
 import { ReconPanel } from "@/components/ReconPanel";
 import { cn } from "@/lib/utils";
 import { chrome } from "@/lib/chrome";
@@ -45,6 +46,10 @@ import { useBinaryStore } from "@/store/binaryStore";
 import { useContextStore } from "@/store/contextStore";
 import { useUiStore } from "@/store/uiStore";
 import type { DecompileAnnotation, Function, Xref } from "@/types";
+
+const RAW_BYTE_PREVIEW = 128;
+const RAW_BYTE_CHUNK = 16 * 1024;
+const FUNCTION_TAB_DRAG_TYPE = "application/x-recurse-function-tab";
 
 const R2Console = lazy(() =>
 	import("@/components/R2Console").then((m) => ({ default: m.R2Console })),
@@ -361,11 +366,114 @@ function OpRow({
 	);
 }
 
+/** Render the open-function strip and support both function drops and tab reordering. */
+function FunctionTabBar({
+	functions,
+	selectedAddr,
+	onSelect,
+	onClose,
+	onMove,
+	onDropFunction,
+}: {
+	functions: Function[];
+	selectedAddr?: number;
+	onSelect: (fn: Function) => void;
+	onClose: (addr: number) => void;
+	onMove: (from: number, to: number) => void;
+	onDropFunction: (addr: number) => void;
+}) {
+	const [dragOver, setDragOver] = useState(false);
+	if (functions.length === 0) return null;
+
+	return (
+		<div
+			className={cn(
+				"border-border bg-card flex h-8 shrink-0 items-stretch overflow-x-auto border-b px-1",
+				dragOver && "bg-primary/10",
+			)}
+			aria-label="Open function tabs"
+			onDragOver={(event) => {
+				event.preventDefault();
+				event.dataTransfer.dropEffect = "copy";
+				setDragOver(true);
+			}}
+			onDragLeave={() => setDragOver(false)}
+			onDrop={(event) => {
+				event.preventDefault();
+				setDragOver(false);
+				const address = Number(
+					event.dataTransfer.getData(FUNCTION_DRAG_TYPE),
+				);
+				if (Number.isFinite(address)) onDropFunction(address);
+			}}
+		>
+			{functions.map((fn) => {
+				const active = selectedAddr === fn.addr;
+				const name =
+					fn.name ??
+					fn.realname ??
+					fn.signature ??
+					`sub_${fn.addr.toString(16)}`;
+				return (
+					<div
+						key={fn.addr}
+						draggable
+						className={cn(
+							"group flex min-w-0 shrink-0 items-center border-r px-2 text-xs",
+							active
+								? "bg-accent text-foreground"
+								: "text-muted-foreground hover:bg-accent/60",
+						)}
+						onDragStart={(event) => {
+							event.dataTransfer.effectAllowed = "move";
+							event.dataTransfer.setData(
+								FUNCTION_TAB_DRAG_TYPE,
+								String(fn.addr),
+							);
+						}}
+						onDragOver={(event) => event.preventDefault()}
+						onDrop={(event) => {
+							event.preventDefault();
+							const from = Number(
+								event.dataTransfer.getData(
+									FUNCTION_TAB_DRAG_TYPE,
+								),
+							);
+							if (Number.isFinite(from)) onMove(from, fn.addr);
+						}}
+					>
+						<button
+							type="button"
+							className="max-w-40 truncate px-1 py-1 text-left"
+							onClick={() => onSelect(fn)}
+							title={`${name} · ${fmtAddr(fn.addr)}`}
+						>
+							{name}
+						</button>
+						<button
+							type="button"
+							className="hover:text-foreground text-muted-foreground ml-1 rounded px-1 opacity-0 group-hover:opacity-100"
+							onClick={() => onClose(fn.addr)}
+							title="Close tab"
+						>
+							<X className="h-3 w-3" />
+						</button>
+					</div>
+				);
+			})}
+		</div>
+	);
+}
+
 export function CenterPanel() {
 	const tab = useUiStore((s) => s.tab);
 	const selected = useAnalysisStore((s) => s.selected);
 	const funcs = useAnalysisStore((s) => s.funcs);
+	const [functionDragOver, setFunctionDragOver] = useState(false);
+	const openTabs = useAnalysisStore((s) => s.openTabs);
 	const selectFn = useAnalysisStore((s) => s.selectFn);
+	const closeFunctionTab = useAnalysisStore((s) => s.closeFunctionTab);
+	const moveFunctionTab = useAnalysisStore((s) => s.moveFunctionTab);
 	const asm = useAnalysisStore((s) => s.asm);
 	const asmLoading = useAnalysisStore((s) => s.asmLoading);
 	const strings = useAnalysisStore((s) => s.strings);
@@ -476,19 +584,28 @@ export function CenterPanel() {
 		bytes: number[];
 		error: string | null;
 	}>({ key: null, bytes: [], error: null });
+	const [rawByteLimit, setRawByteLimit] = useState(RAW_BYTE_PREVIEW);
 	const [insnSelection, setInsnSelection] = useState<{
 		address: number;
 		instruction: number | null;
 	}>({ address: selectedAddr ?? 0, instruction: selectedAddr ?? null });
 	const selectedSize = selected?.size ?? asm?.size ?? 0;
+	const openFunctions = useMemo(
+		() =>
+			openTabs
+				.map((addr) => funcs.find((fn) => fn.addr === addr))
+				.filter((fn): fn is Function => fn !== undefined),
+		[funcs, openTabs],
+	);
 	const sectionName = ".text";
 	const activeInsn =
 		insnSelection.address === selectedAddr
 			? insnSelection.instruction
 			: (selectedAddr ?? null);
+	const rawLimit = Math.min(selectedSize, rawByteLimit);
 	const rawKey =
 		selected && viewOptions.showRawBytes && selectedSize > 0
-			? `${selected.addr}:${selectedSize}`
+			? `${selected.addr}:${selectedSize}:${rawLimit}`
 			: null;
 	const rawBytes = rawState.key === rawKey ? rawState.bytes : [];
 	const rawBytesLoading = rawKey !== null && rawState.key !== rawKey;
@@ -503,13 +620,17 @@ export function CenterPanel() {
 	};
 
 	useEffect(() => {
+		setRawByteLimit(RAW_BYTE_PREVIEW);
+	}, [selectedAddr]);
+
+	useEffect(() => {
 		let cancelled = false;
 		if (!rawKey || !selected)
 			return () => {
 				cancelled = true;
 			};
 		void api
-			.readBytes(selected.addr, Math.min(selectedSize, 128))
+			.readBytes(selected.addr, rawLimit)
 			.then((bytes) => {
 				if (!cancelled) {
 					setRawState({ key: rawKey, bytes, error: null });
@@ -527,7 +648,7 @@ export function CenterPanel() {
 		return () => {
 			cancelled = true;
 		};
-	}, [rawKey, selected, selectedAddr, selectedSize]);
+	}, [rawKey, rawLimit, selected, selectedAddr, selectedSize]);
 
 	// Large Rust binaries can carry 100k+ strings (youki: 113k). Rendering
 	// them all freezes the webview, so filter first and cap the row count.
@@ -655,7 +776,56 @@ export function CenterPanel() {
 	};
 
 	return (
-		<div className="flex min-h-0 min-w-0 flex-1 flex-col">
+		<div
+			className={cn("relative flex min-h-0 min-w-0 flex-1 flex-col")}
+			onDragOver={(event) => {
+				if (!event.dataTransfer.types.includes(FUNCTION_DRAG_TYPE))
+					return;
+				event.preventDefault();
+				event.dataTransfer.dropEffect = "copy";
+				setFunctionDragOver(true);
+			}}
+			onDragLeave={(event) => {
+				if (event.currentTarget === event.target)
+					setFunctionDragOver(false);
+			}}
+			onDrop={(event) => {
+				if (!event.dataTransfer.types.includes(FUNCTION_DRAG_TYPE))
+					return;
+				event.preventDefault();
+				setFunctionDragOver(false);
+				const address = Number(
+					event.dataTransfer.getData(FUNCTION_DRAG_TYPE),
+				);
+				const fn = funcs.find(
+					(candidate) => candidate.addr === address,
+				);
+				if (fn) selectFn(fn);
+			}}
+		>
+			{functionDragOver && (
+				<div className="border-primary/70 bg-background/80 pointer-events-none absolute inset-2 z-30 flex items-center justify-center rounded-lg border-2 border-dashed backdrop-blur-[1px]">
+					<div className="border-primary/50 bg-card flex items-center gap-2 rounded-md border px-3 py-2 text-xs font-medium shadow-xl">
+						<FilePlus2 className="text-primary h-4 w-4" />
+						Drop to open in a new function tab
+					</div>
+				</div>
+			)}
+			{tab === "disasm" && (
+				<FunctionTabBar
+					functions={openFunctions}
+					selectedAddr={selected?.addr}
+					onSelect={selectFn}
+					onClose={closeFunctionTab}
+					onMove={moveFunctionTab}
+					onDropFunction={(addr) => {
+						const fn = funcs.find(
+							(candidate) => candidate.addr === addr,
+						);
+						if (fn) selectFn(fn);
+					}}
+				/>
+			)}
 			{tab === "disasm" && (
 				<div className="border-border bg-card ui-bar shrink-0 gap-2 border-b px-3">
 					{selected && (
@@ -807,6 +977,23 @@ export function CenterPanel() {
 											loading={rawBytesLoading}
 											error={rawBytesError}
 											showAscii={viewOptions.showAscii}
+											canShowMore={
+												rawLimit < selectedSize ||
+												(rawLimit === selectedSize &&
+													rawLimit > RAW_BYTE_PREVIEW)
+											}
+											showAll={rawLimit === selectedSize}
+											onShowMore={() =>
+												setRawByteLimit((current) =>
+													current >= selectedSize
+														? RAW_BYTE_PREVIEW
+														: Math.min(
+																selectedSize,
+																current +
+																	RAW_BYTE_CHUNK,
+															),
+												)
+											}
 										/>
 									)}
 									{viewOptions.showSectionHeaders &&
