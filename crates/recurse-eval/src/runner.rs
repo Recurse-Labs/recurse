@@ -111,6 +111,7 @@ fn task_prompt(binary: &Path, backend: BackendKind) -> String {
     let ops = match backend {
         BackendKind::R2 => "functions, disasm, decompile, xrefs, strings, imports",
         BackendKind::Native => "functions, disasm, decompile, lift, xrefs, strings, imports",
+        BackendKind::Ida => "functions, disasm, decompile, strings, raw",
     };
     format!(
         "Recover a valid serial/key for the binary at {}.\n\
@@ -162,6 +163,15 @@ pub async fn run_task(task: &Task, binary: &Path, opts: &EvalOpts) -> Result<Tas
             Ok(e) => Some(std::sync::Arc::new(std::sync::Mutex::new(e))),
             Err(e) => {
                 eprintln!("[eval] native engine unavailable ({e}); falling back to bash only");
+                None
+            }
+        },
+        BackendKind::Ida => match recurse_agent::ida_backend::IdaEngine::open(binary) {
+            Ok(e) => Some(std::sync::Arc::new(std::sync::Mutex::new(
+                Box::new(e) as Box<dyn Engine>
+            ))),
+            Err(e) => {
+                eprintln!("[eval] IDA unavailable ({e}); falling back to bash only");
                 None
             }
         },

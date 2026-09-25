@@ -291,17 +291,21 @@ pub(crate) async fn stream_http(
     tools: &[Value],
     emit: &mut (dyn FnMut(AgentEvent) + Send),
 ) -> Result<StreamOutcome, String> {
-    let oauth = true; // this module is only ever reached via the OAuth protocol path
+    let oauth = config.api_key.as_deref().map(|k| k.starts_with("sk-ant-oat")).unwrap_or(false);
     let body = build_request(&config.model, messages, tools, oauth);
     let key = config.api_key.as_deref().unwrap_or("");
 
     let send = || {
         let mut request = http_client()
             .post(&config.endpoint)
-            .header("anthropic-version", ANTHROPIC_VERSION)
-            .header("anthropic-beta", OAUTH_BETA)
-            .bearer_auth(key)
-            .json(&body);
+            .header("anthropic-version", ANTHROPIC_VERSION);
+        if !key.is_empty() {
+            request = request.header("x-api-key", key).bearer_auth(key);
+        }
+        if oauth {
+            request = request.header("anthropic-beta", OAUTH_BETA);
+        }
+        request = request.json(&body);
         for (name, value) in &config.extra_headers {
             request = request.header(name.as_str(), value.as_str());
         }

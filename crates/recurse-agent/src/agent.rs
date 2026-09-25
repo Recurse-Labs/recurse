@@ -139,11 +139,21 @@ impl LlmConfig {
     /// with no extra headers; use [`LlmConfig::with_protocol`]/
     /// [`LlmConfig::with_extra_headers`] to change either.
     pub fn new(endpoint: String, api_key: Option<String>, model: String) -> Self {
+        let is_anthropic = endpoint.contains("/anthropic") || endpoint.contains("api.anthropic.com");
+        let protocol = if is_anthropic {
+            Protocol::AnthropicNative
+        } else {
+            Protocol::OpenAiCompatible
+        };
+        let normalized = match protocol {
+            Protocol::AnthropicNative => normalize_anthropic_endpoint(&endpoint),
+            Protocol::OpenAiCompatible => normalize_endpoint(&endpoint),
+        };
         Self {
-            endpoint: normalize_endpoint(&endpoint),
+            endpoint: normalized,
             api_key,
             model,
-            protocol: Protocol::OpenAiCompatible,
+            protocol,
             extra_headers: Vec::new(),
         }
     }
@@ -151,6 +161,9 @@ impl LlmConfig {
     #[must_use]
     pub fn with_protocol(mut self, protocol: Protocol) -> Self {
         self.protocol = protocol;
+        if protocol == Protocol::AnthropicNative && !self.endpoint.ends_with("/messages") {
+            self.endpoint = normalize_anthropic_endpoint(&self.endpoint);
+        }
         self
     }
 
@@ -175,14 +188,59 @@ impl Default for LlmConfig {
         let model = std::env::var("RECURSE_LLM_MODEL")
             .ok()
             .unwrap_or_else(|| DEFAULT_MODEL.to_string());
+        let env_protocol = std::env::var("RECURSE_LLM_PROTOCOL").ok();
+        let is_anthropic = match env_protocol.as_deref() {
+            Some("anthropic" | "anthropic_native" | "anthropic-native") => true,
+            _ => endpoint.contains("/anthropic") || endpoint.contains("api.anthropic.com"),
+        };
+        let protocol = if is_anthropic {
+            Protocol::AnthropicNative
+        } else {
+            Protocol::OpenAiCompatible
+        };
+        let normalized = match protocol {
+            Protocol::AnthropicNative => normalize_anthropic_endpoint(&endpoint),
+            Protocol::OpenAiCompatible => normalize_endpoint(&endpoint),
+        };
         Self {
-            endpoint,
+            endpoint: normalized,
             api_key,
             model,
-            protocol: Protocol::OpenAiCompatible,
+            protocol,
             extra_headers: Vec::new(),
         }
     }
+}
+
+/// Anthropic Messages API endpoint normalization. Accepts a bare base URL
+/// (`https://api.anthropic.com/v1`, `https://api.z.ai/api/anthropic`) or a full route;
+/// `/messages` is appended only when the path doesn't already name a messages route.
+///
+/// # Examples
+///
+/// ```
+/// use recurse_agent::agent::normalize_anthropic_endpoint;
+/// assert_eq!(
+///     normalize_anthropic_endpoint("https://api.z.ai/api/anthropic"),
+///     "https://api.z.ai/api/anthropic/v1/messages"
+/// );
+/// assert_eq!(
+///     normalize_anthropic_endpoint("https://api.anthropic.com/v1/messages"),
+///     "https://api.anthropic.com/v1/messages"
+/// );
+/// ```
+pub fn normalize_anthropic_endpoint(endpoint: &str) -> String {
+    let trimmed = endpoint.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return crate::anthropic::DEFAULT_BASE_URL.to_string();
+    }
+    if trimmed.ends_with("/messages") {
+        return trimmed.to_string();
+    }
+    if trimmed.ends_with("/v1") {
+        return format!("{trimmed}/messages");
+    }
+    format!("{trimmed}/v1/messages")
 }
 
 /// OpenAI-compatible endpoint normalization. Accepts a bare base URL
@@ -190,6 +248,20 @@ impl Default for LlmConfig {
 /// provider) or a full route; `/chat/completions` is appended only when the
 /// path doesn't already name a completions route. Empty falls back to the
 /// built-in default so a blank config value can't produce a relative URL.
+///
+/// # Examples
+///
+/// ```
+/// use recurse_agent::agent::normalize_endpoint;
+/// assert_eq!(
+///     normalize_endpoint("https://openrouter.ai/api/v1"),
+///     "https://openrouter.ai/api/v1/chat/completions"
+/// );
+/// assert_eq!(
+///     normalize_endpoint("https://openrouter.ai/api/v1/chat/completions"),
+///     "https://openrouter.ai/api/v1/chat/completions"
+/// );
+/// ```
 pub fn normalize_endpoint(endpoint: &str) -> String {
     let trimmed = endpoint.trim().trim_end_matches('/');
     if trimmed.is_empty() {

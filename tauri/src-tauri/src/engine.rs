@@ -24,6 +24,7 @@ pub fn build(path: &Path) -> Result<Box<dyn Engine>, String> {
     match crate::config::backend() {
         BackendKind::R2 => Ok(Box::new(recurse_agent::r2_backend::R2Engine::open(path)?)),
         BackendKind::Native => recurse_agent::native::open(path),
+        BackendKind::Ida => Ok(Box::new(recurse_agent::ida_backend::IdaEngine::open(path)?)),
     }
 }
 

@@ -41,6 +41,8 @@
 pub enum AuthKind {
     /// A bearer API key against an OpenAI-compatible endpoint.
     ApiKey,
+    /// An API key against a native Anthropic Messages API endpoint.
+    AnthropicApiKey,
     /// Claude Pro/Max subscription via OAuth (native Anthropic protocol).
     OAuthAnthropic,
     /// GitHub Copilot subscription via OAuth (OpenAI-compatible protocol
@@ -57,8 +59,8 @@ pub struct ProviderPreset {
     pub id: &'static str,
     /// Display name for the UI.
     pub name: &'static str,
-    /// OpenAI-compatible base URL (`.../v1`), used as-is for
-    /// [`AuthKind::ApiKey`]/[`AuthKind::OAuthGithubCopilot`]/[`AuthKind::Local`].
+    /// Base URL (`.../v1` or `.../messages`), used for
+    /// [`AuthKind::ApiKey`]/[`AuthKind::AnthropicApiKey`]/[`AuthKind::OAuthGithubCopilot`]/[`AuthKind::Local`].
     /// Ignored for [`AuthKind::OAuthAnthropic`], which uses
     /// `crate::anthropic`'s own native base URL instead.
     pub base_url: &'static str,
@@ -66,10 +68,9 @@ pub struct ProviderPreset {
     /// Where a user gets a key/enables the API, for the "how do I get a
     /// key" link in the UI.
     pub docs_url: &'static str,
-    /// Extra static headers this provider's OpenAI-compatible endpoint
-    /// requires beyond a bearer token (e.g. GitHub Copilot's proxy
-    /// rejects requests without an `Editor-Version`/`Copilot-Integration-Id`
-    /// pair).
+    /// Extra static headers this provider's endpoint requires beyond a
+    /// bearer token (e.g. GitHub Copilot's proxy rejects requests without
+    /// an `Editor-Version`/`Copilot-Integration-Id` pair).
     pub extra_headers: &'static [(&'static str, &'static str)],
 }
 
@@ -113,8 +114,8 @@ pub const PROVIDERS: &[ProviderPreset] = &[
     ProviderPreset {
         id: "anthropic",
         name: "Anthropic (API key)",
-        base_url: "https://api.anthropic.com/v1",
-        auth: AuthKind::ApiKey,
+        base_url: "https://api.anthropic.com/v1/messages",
+        auth: AuthKind::AnthropicApiKey,
         docs_url: "https://console.anthropic.com/settings/keys",
         extra_headers: NONE,
     },
@@ -258,7 +259,15 @@ pub const PROVIDERS: &[ProviderPreset] = &[
     },
     ProviderPreset {
         id: "zai",
-        name: "Z.AI (GLM)",
+        name: "Z.AI GLM (Coding Plan / Anthropic)",
+        base_url: "https://api.z.ai/api/anthropic/v1/messages",
+        auth: AuthKind::AnthropicApiKey,
+        docs_url: "https://z.ai/manage-apikey/apikey-list",
+        extra_headers: NONE,
+    },
+    ProviderPreset {
+        id: "zai-openai",
+        name: "Z.AI GLM (OpenAI API)",
         base_url: "https://api.z.ai/api/paas/v4",
         auth: AuthKind::ApiKey,
         docs_url: "https://z.ai/manage-apikey/apikey-list",

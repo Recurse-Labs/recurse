@@ -32,7 +32,7 @@ use pyo3::types::{PyDict, PyList};
 use std::path::PathBuf;
 
 use recurse_static::engine::{self, BackendKind};
-use recurse_static::{native, r2_backend};
+use recurse_static::{ida_backend, native, r2_backend};
 
 fn to_pyerr(message: String) -> PyErr {
     PyRuntimeError::new_err(message)
@@ -111,6 +111,7 @@ impl Engine {
         let inner: Box<dyn engine::Engine> = match kind {
             BackendKind::Native => Box::new(native::NativeEngine::open(&target).map_err(to_pyerr)?),
             BackendKind::R2 => Box::new(r2_backend::R2Engine::open(&target).map_err(to_pyerr)?),
+            BackendKind::Ida => Box::new(ida_backend::IdaEngine::open(&target).map_err(to_pyerr)?),
         };
         Ok(Self { inner })
     }

@@ -182,7 +182,7 @@ export interface DeviceLoginInfo {
 }
 
 /** Analysis backend implementations selectable at runtime. */
-export type Backend = "r2" | "native";
+export type Backend = "r2" | "native" | "ida";
 
 export interface Project {
 	name: string;

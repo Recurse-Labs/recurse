@@ -2,6 +2,9 @@ import { create } from "zustand";
 
 import { api } from "../api";
 import type { Backend } from "../types";
+import { useAnalysisStore } from "./analysisStore";
+import { useBinaryStore } from "./binaryStore";
+import { useUiStore } from "./uiStore";
 
 const KEY = "recurse.zoomLevel";
 const BACKEND_KEY = "recurse.backend";
@@ -9,6 +12,12 @@ const THEME_KEY = "recurse.theme";
 const MIN = -5;
 const MAX = 8;
 
+/**
+ * Calculates the zoom scale multiplier for a given integer zoom level.
+ *
+ * @param level - The integer zoom level.
+ * @returns The scale multiplier factor.
+ */
 function scaleFor(level: number): number {
 	return Math.pow(1.2, level);
 }
@@ -30,17 +39,32 @@ interface SettingsState {
 	setTheme: (theme: Theme) => void;
 }
 
+/**
+ * Reads the initially configured backend from localStorage.
+ *
+ * @returns The initial Backend identifier ('native', 'r2', or 'ida').
+ */
 function readInitialBackend(): Backend {
 	const v = localStorage.getItem(BACKEND_KEY);
-	return v === "r2" ? "r2" : "native";
+	return v === "r2" || v === "ida" ? v : "native";
 }
 
+/**
+ * Reads the initial zoom level from localStorage.
+ *
+ * @returns Clamped integer zoom level between MIN and MAX.
+ */
 function readInitial(): number {
 	const v = Number(localStorage.getItem(KEY));
 	if (!Number.isFinite(v)) return 0;
 	return Math.min(MAX, Math.max(MIN, Math.round(v)));
 }
 
+/**
+ * Reads the initial theme from localStorage or system prefers-color-scheme.
+ *
+ * @returns 'light' or 'dark'.
+ */
 function readInitialTheme(): Theme {
 	const v = localStorage.getItem(THEME_KEY);
 	if (v === "light" || v === "dark") return v;
@@ -52,6 +76,11 @@ function readInitialTheme(): Theme {
 	return "dark";
 }
 
+/**
+ * Applies the given theme to document.documentElement.
+ *
+ * @param theme - The theme to apply ('light' or 'dark').
+ */
 function applyTheme(theme: Theme) {
 	if (typeof document === "undefined") return;
 	const root = document.documentElement;
@@ -115,12 +144,35 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 	},
 
 	setBackend: async (backend: Backend) => {
-		set({ backend });
-		localStorage.setItem(BACKEND_KEY, backend);
+		const prevBackend = get().backend;
 		try {
 			await api.setBackend(backend);
-		} catch {
-			/* non-fatal: takes effect on next launch */
+			useAnalysisStore.getState().clearDecompiled();
+			const currentBinary = useBinaryStore.getState().binary;
+			if (currentBinary?.path) {
+				const prevSelected = useAnalysisStore.getState().selected;
+				const currentTab = useUiStore.getState().tab;
+				await useBinaryStore.getState().openBinary(currentBinary.path);
+				if (currentTab) {
+					useUiStore.getState().setTab(currentTab);
+				}
+				if (prevSelected) {
+					const funcs = useAnalysisStore.getState().funcs;
+					const match = funcs.find(
+						(f) => f.addr === prevSelected.addr || f.name === prevSelected.name,
+					);
+					if (match) {
+						useAnalysisStore.getState().selectFn(match);
+					}
+				}
+			}
+			set({ backend });
+			localStorage.setItem(BACKEND_KEY, backend);
+		} catch (e) {
+			useUiStore.getState().setErr(String(e));
+			set({ backend: prevBackend });
+			localStorage.setItem(BACKEND_KEY, prevBackend);
+			await api.setBackend(prevBackend).catch(() => {});
 		}
 	},
 

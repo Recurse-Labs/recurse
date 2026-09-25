@@ -27,4 +27,4 @@ pub mod verify;
 
 // Static analysis, re-exported so `recurse_agent::engine` and friends keep
 // working for hosts and the eval harness.
-pub use recurse_static::{engine, native, r2, r2_backend, signals};
+pub use recurse_static::{engine, ida_backend, native, r2, r2_backend, signals};

@@ -70,8 +70,10 @@ fn run_backend_parses_from_yaml() {
     assert_eq!(native.run.backend, Some(BackendKind::Native));
     let external: EvalConfig = serde_yaml::from_str("run:\n  backend: r2\n").expect("parse");
     assert_eq!(external.run.backend, Some(BackendKind::R2));
+    let ida: EvalConfig = serde_yaml::from_str("run:\n  backend: ida\n").expect("parse");
+    assert_eq!(ida.run.backend, Some(BackendKind::Ida));
     // Unknown values are a parse error, not a silent fallback.
-    assert!(serde_yaml::from_str::<EvalConfig>("run:\n  backend: ida\n").is_err());
+    assert!(serde_yaml::from_str::<EvalConfig>("run:\n  backend: unknown_backend\n").is_err());
 }
 
 #[test]

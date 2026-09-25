@@ -34,7 +34,7 @@ println!("removed: {:?}  added: {:?}", result.removed, result.added);
 
 This module takes plain `FunctionSummary` values, not an `Engine` or raw
 binary bytes — the caller extracts a normalized instruction shape from
-whichever backend (native/r2) they're already using. That keeps the
+whichever backend (native/r2/ida) they're already using. That keeps the
 *matching algorithm* testable with hand-built inputs, independent of
 disassembly, and reusable across all three `Engine` backends this crate
 has without adding a fourth dependency direction. `normalize_mnemonics` is

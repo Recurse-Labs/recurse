@@ -148,6 +148,15 @@ export function Header() {
 							<span className="flex-1">radare2</span>
 							<span className="text-2xs opacity-70">opt-in</span>
 						</DropdownMenuItem>
+						<DropdownMenuItem
+							className={cn(
+								backend === "ida" && chrome.selected,
+							)}
+							onClick={() => void setBackend("ida")}
+						>
+							<span className="flex-1">IDA Pro</span>
+							<span className="text-2xs opacity-70">Hex-Rays</span>
+						</DropdownMenuItem>
 					</DropdownMenuContent>
 				</DropdownMenu>
 			</div>

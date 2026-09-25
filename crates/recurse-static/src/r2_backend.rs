@@ -348,9 +348,15 @@ impl Engine for R2Engine {
     }
 
     fn decompile(&self, addr: u64) -> Result<Decompilation, String> {
-        let text = self.run_text(&format!("pdg @ {addr:#x}"))?;
+        let mut text = self.run_text(&format!("pdg @ {addr:#x}")).unwrap_or_default();
+        if text.trim().is_empty() || text.contains("install the plugin with r2pm") {
+            text = self.run_text(&format!("pdd @ {addr:#x}")).unwrap_or_default();
+        }
+        if text.trim().is_empty() || text.contains("install the plugin with r2pm") {
+            text = self.run_text(&format!("pdc @ {addr:#x}")).unwrap_or_default();
+        }
         if text.trim().is_empty() {
-            return Err("decompiler produced no output (is r2ghidra installed?)".into());
+            return Err("decompiler produced no output (is r2ghidra or r2dec installed?)".into());
         }
         let name = self
             .function_at(addr)?

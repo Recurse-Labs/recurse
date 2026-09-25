@@ -43,6 +43,8 @@ pub enum BackendKind {
     R2,
     /// Pure-Rust ELF/PE/Mach-O parsing and disassembly.
     Native,
+    /// IDA Pro (Hex-Rays), driven over headless IPC.
+    Ida,
 }
 
 impl Default for BackendKind {
@@ -60,19 +62,21 @@ impl Default for BackendKind {
 }
 
 impl BackendKind {
-    /// Parse a backend name. Accepts `native` and r2's names.
+    /// Parse a backend name. Accepts `native`, `r2`, and `ida` names.
     ///
     /// ```
     /// use recurse_static::engine::BackendKind;
     /// assert_eq!(BackendKind::parse("r2"), Some(BackendKind::R2));
     /// assert_eq!(BackendKind::parse("radare2"), Some(BackendKind::R2));
     /// assert_eq!(BackendKind::parse("Native"), Some(BackendKind::Native));
+    /// assert_eq!(BackendKind::parse("ida"), Some(BackendKind::Ida));
     /// assert_eq!(BackendKind::parse("ghidra"), None);
     /// ```
     pub fn parse(name: &str) -> Option<Self> {
         match name.trim().to_ascii_lowercase().as_str() {
             "r2" | "radare2" => Some(Self::R2),
             "native" | "rust" => Some(Self::Native),
+            "ida" | "idapro" | "hexrays" => Some(Self::Ida),
             _ => None,
         }
     }
@@ -87,6 +91,8 @@ impl BackendKind {
     /// assert_eq!(BackendKind::from_env(), BackendKind::default());
     /// std::env::set_var("RECURSE_BACKEND", "r2");
     /// assert_eq!(BackendKind::from_env(), BackendKind::R2);
+    /// std::env::set_var("RECURSE_BACKEND", "ida");
+    /// assert_eq!(BackendKind::from_env(), BackendKind::Ida);
     /// std::env::remove_var("RECURSE_BACKEND");
     /// ```
     pub fn from_env() -> Self {
@@ -102,11 +108,13 @@ impl BackendKind {
     /// use recurse_static::engine::BackendKind;
     /// assert_eq!(BackendKind::R2.as_str(), "r2");
     /// assert_eq!(BackendKind::Native.as_str(), "native");
+    /// assert_eq!(BackendKind::Ida.as_str(), "ida");
     /// ```
     pub fn as_str(self) -> &'static str {
         match self {
             Self::R2 => "r2",
             Self::Native => "native",
+            Self::Ida => "ida",
         }
     }
 }
@@ -1066,8 +1074,10 @@ mod tests {
         assert_eq!(BackendKind::parse("r2"), Some(BackendKind::R2));
         assert_eq!(BackendKind::parse("RADARE2"), Some(BackendKind::R2));
         assert_eq!(BackendKind::parse("native"), Some(BackendKind::Native));
-        assert_eq!(BackendKind::parse("ida"), None);
+        assert_eq!(BackendKind::parse("ida"), Some(BackendKind::Ida));
+        assert_eq!(BackendKind::parse("unknown_engine"), None);
         assert_eq!(BackendKind::R2.as_str(), "r2");
+        assert_eq!(BackendKind::Ida.as_str(), "ida");
     }
 
     #[test]
