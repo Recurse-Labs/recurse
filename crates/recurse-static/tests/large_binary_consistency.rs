@@ -1,5 +1,7 @@
 //! Network-backed consistency checks against a real stripped release binary.
 
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::io::{Read, Write};

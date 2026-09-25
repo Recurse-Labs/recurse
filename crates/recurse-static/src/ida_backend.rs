@@ -21,6 +21,9 @@ use crate::engine::{
     FunctionInfo, Import, Instruction, StringRef, Target, Xref, XrefDirection,
 };
 
+const IDA_MAX_FUNCTIONS: usize = 20_000;
+const IDA_MAX_READ_BYTES: usize = 16 * 1024 * 1024;
+
 /// Embedded IDAPython bridge script content.
 pub const IDA_BRIDGE_SCRIPT: &str = include_str!("ida_bridge.py");
 
@@ -46,8 +49,14 @@ pub const IDA_BRIDGE_SCRIPT: &str = include_str!("ida_bridge.py");
 /// ```
 pub fn check_dir_for_ida(dir: &Path) -> Option<PathBuf> {
     let bins = [
-        "idat64", "idat", "ida64", "ida",
-        "idat64.exe", "idat.exe", "ida64.exe", "ida.exe",
+        "idat64",
+        "idat",
+        "ida64",
+        "ida",
+        "idat64.exe",
+        "idat.exe",
+        "ida64.exe",
+        "ida.exe",
     ];
     for b in &bins {
         let p = dir.join(b);
@@ -173,6 +182,12 @@ pub fn find_ida_executable() -> Option<PathBuf> {
     None
 }
 
+/// Stop and reap a partially initialized IDA child process.
+fn stop_child(child: &mut Child) {
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 /// The IDA Pro engine backend.
 pub struct IdaEngine {
     path: PathBuf,
@@ -180,6 +195,8 @@ pub struct IdaEngine {
     writer: Mutex<TcpStream>,
     pid: AtomicU32,
     _child: Mutex<Child>,
+    call_lock: Mutex<()>,
+    session_dir: PathBuf,
     renames: Mutex<HashMap<u64, String>>,
 }
 
@@ -202,12 +219,13 @@ impl IdaEngine {
             .map_err(|e| format!("failed to get local IPC port: {e}"))?
             .port();
 
-        // Write bridge script and database to temporary file
-        let bridge_dir = std::env::temp_dir().join("recurse_ida");
-        let _ = std::fs::create_dir_all(&bridge_dir);
+        let bridge_root = std::env::temp_dir().join("recurse_ida");
+        let bridge_dir = bridge_root.join(format!("session_{port}"));
+        std::fs::create_dir_all(&bridge_dir)
+            .map_err(|e| format!("failed to create IDA session directory: {e}"))?;
         let bridge_path = bridge_dir.join("ida_bridge.py");
         let log_path = bridge_dir.join("ida.log");
-        let db_path = bridge_dir.join(format!("session_{}.i64", port));
+        let db_path = bridge_dir.join("analysis.i64");
         std::fs::write(&bridge_path, IDA_BRIDGE_SCRIPT)
             .map_err(|e| format!("failed to write IDA bridge script: {e}"))?;
 
@@ -230,9 +248,11 @@ impl IdaEngine {
         let pid = child.id();
 
         // Wait for incoming connection from bridge
-        listener
-            .set_nonblocking(true)
-            .map_err(|e| e.to_string())?;
+        if let Err(error) = listener.set_nonblocking(true) {
+            stop_child(&mut child);
+            let _ = std::fs::remove_dir_all(&bridge_dir);
+            return Err(error.to_string());
+        }
 
         let start = std::time::Instant::now();
         let stream = loop {
@@ -244,6 +264,8 @@ impl IdaEngine {
                         let log_content = std::fs::read_to_string(&log_path)
                             .unwrap_or_else(|_| "no log available".to_string());
                         let snippet: String = log_content.chars().take(800).collect();
+                        stop_child(&mut child);
+                        let _ = std::fs::remove_dir_all(&bridge_dir);
                         return Err(format!(
                             "IDA Pro process exited early with status {status}. Log: {snippet}"
                         ));
@@ -252,34 +274,51 @@ impl IdaEngine {
                         let log_content = std::fs::read_to_string(&log_path)
                             .unwrap_or_else(|_| "no log available".to_string());
                         let snippet: String = log_content.chars().take(800).collect();
+                        stop_child(&mut child);
+                        let _ = std::fs::remove_dir_all(&bridge_dir);
                         return Err(format!(
                             "IDA Pro initialization timed out (pid {pid}). Log: {snippet}"
                         ));
                     }
                     std::thread::sleep(Duration::from_millis(50));
                 }
-                Err(e) => return Err(format!("IPC connection failed: {e}")),
+                Err(e) => {
+                    stop_child(&mut child);
+                    let _ = std::fs::remove_dir_all(&bridge_dir);
+                    return Err(format!("IPC connection failed: {e}"));
+                }
             }
         };
 
-        stream
-            .set_read_timeout(Some(Duration::from_secs(60)))
-            .map_err(|e| e.to_string())?;
-        stream
-            .set_write_timeout(Some(Duration::from_secs(10)))
-            .map_err(|e| e.to_string())?;
+        if let Err(error) = stream.set_read_timeout(Some(Duration::from_secs(60))) {
+            stop_child(&mut child);
+            let _ = std::fs::remove_dir_all(&bridge_dir);
+            return Err(error.to_string());
+        }
+        if let Err(error) = stream.set_write_timeout(Some(Duration::from_secs(10))) {
+            stop_child(&mut child);
+            let _ = std::fs::remove_dir_all(&bridge_dir);
+            return Err(error.to_string());
+        }
 
-        let writer_stream = stream
-            .try_clone()
-            .map_err(|e| format!("failed to clone stream: {e}"))?;
+        let writer_stream = match stream.try_clone() {
+            Ok(writer) => writer,
+            Err(error) => {
+                stop_child(&mut child);
+                let _ = std::fs::remove_dir_all(&bridge_dir);
+                return Err(format!("failed to clone stream: {error}"));
+            }
+        };
         let mut reader = BufReader::new(stream);
 
         // Read until ready message
         loop {
             let mut line = String::new();
-            reader
-                .read_line(&mut line)
-                .map_err(|e| format!("failed to read IDA ready message: {e}"))?;
+            if let Err(error) = reader.read_line(&mut line) {
+                stop_child(&mut child);
+                let _ = std::fs::remove_dir_all(&bridge_dir);
+                return Err(format!("failed to read IDA ready message: {error}"));
+            }
             if line.contains("\"ready\"") {
                 break;
             }
@@ -291,12 +330,18 @@ impl IdaEngine {
             writer: Mutex::new(writer_stream),
             pid: AtomicU32::new(pid),
             _child: Mutex::new(child),
+            call_lock: Mutex::new(()),
+            session_dir: bridge_dir,
             renames: Mutex::new(HashMap::new()),
         })
     }
 
     /// Send a JSON-RPC request to the IDA bridge and return the result value.
     fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+        let _call_guard = self
+            .call_lock
+            .lock()
+            .map_err(|e| format!("IDA call lock poisoned: {e}"))?;
         let req = json!({
             "id": 1,
             "method": method,
@@ -335,6 +380,9 @@ impl IdaEngine {
         let resp: Value = serde_json::from_str(&line)
             .map_err(|e| format!("invalid JSON from IDA: {e} (raw: {line})"))?;
 
+        if resp.get("id").and_then(Value::as_u64) != Some(1) {
+            return Err("IDA bridge returned a response for the wrong request".to_string());
+        }
         if let Some(err) = resp.get("error") {
             return Err(format!("IDA error: {err}"));
         }
@@ -351,7 +399,7 @@ impl Engine for IdaEngine {
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             decompile: true,
-            raw: true,
+            raw: false,
             graph: true,
             xrefs_from: true,
         }
@@ -388,8 +436,14 @@ impl Engine for IdaEngine {
         let raw = self.call("info", json!({}))?;
         let arch = raw.get("arch").and_then(Value::as_str).unwrap_or("unknown");
         let bits = raw.get("bits").and_then(Value::as_u64).unwrap_or(64);
-        let endian = raw.get("endian").and_then(Value::as_str).unwrap_or("little");
-        let file_type = raw.get("file_type").and_then(Value::as_str).unwrap_or("unknown");
+        let endian = raw
+            .get("endian")
+            .and_then(Value::as_str)
+            .unwrap_or("little");
+        let file_type = raw
+            .get("file_type")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
         let min_ea = raw.get("min_ea").and_then(Value::as_u64).unwrap_or(0);
         let max_ea = raw.get("max_ea").and_then(Value::as_u64).unwrap_or(0);
         let entry = raw.get("entry").and_then(Value::as_u64).unwrap_or(min_ea);
@@ -430,7 +484,7 @@ impl Engine for IdaEngine {
     }
 
     fn functions(&self) -> Result<Vec<FunctionInfo>, String> {
-        let res = self.call("functions", json!({ "limit": 10000 }))?;
+        let res = self.call("functions", json!({ "limit": IDA_MAX_FUNCTIONS }))?;
         let renames = self.renames.lock().unwrap_or_else(|e| e.into_inner());
         let items = res
             .get("functions")
@@ -518,8 +572,14 @@ impl Engine for IdaEngine {
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_string();
-            let bytes = op.get("bytes").and_then(Value::as_str).map(|s| s.to_string());
-            let kind = op.get("type").and_then(Value::as_str).map(|s| s.to_string());
+            let bytes = op
+                .get("bytes")
+                .and_then(Value::as_str)
+                .map(|s| s.to_string());
+            let kind = op
+                .get("type")
+                .and_then(Value::as_str)
+                .map(|s| s.to_string());
             let jump = op.get("jump").and_then(Value::as_u64);
             let fail = op.get("fail").and_then(Value::as_u64);
             let len = op.get("len").and_then(Value::as_u64).unwrap_or(0) as u32;
@@ -579,8 +639,14 @@ impl Engine for IdaEngine {
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .to_string();
-                let bytes = op.get("bytes").and_then(Value::as_str).map(|s| s.to_string());
-                let kind = op.get("type").and_then(Value::as_str).map(|s| s.to_string());
+                let bytes = op
+                    .get("bytes")
+                    .and_then(Value::as_str)
+                    .map(|s| s.to_string());
+                let kind = op
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .map(|s| s.to_string());
                 let op_jump = op.get("jump").and_then(Value::as_u64);
                 let op_fail = op.get("fail").and_then(Value::as_u64);
                 let len = op.get("len").and_then(Value::as_u64).unwrap_or(0) as u32;
@@ -650,14 +716,8 @@ impl Engine for IdaEngine {
                 .unwrap_or("")
                 .to_string();
             let plt = item.get("plt").and_then(Value::as_u64);
-            let bind = item
-                .get("bind")
-                .and_then(Value::as_str)
-                .map(str::to_string);
-            let kind = item
-                .get("kind")
-                .and_then(Value::as_str)
-                .map(str::to_string);
+            let bind = item.get("bind").and_then(Value::as_str).map(str::to_string);
+            let kind = item.get("kind").and_then(Value::as_str).map(str::to_string);
             out.push(Import {
                 name,
                 plt,
@@ -677,7 +737,10 @@ impl Engine for IdaEngine {
             XrefDirection::To => "to",
             XrefDirection::From => "from",
         };
-        let res = self.call("xrefs", json!({ "addr": addr, "direction": dir_str, "limit": 200 }))?;
+        let res = self.call(
+            "xrefs",
+            json!({ "addr": addr, "direction": dir_str, "limit": 200 }),
+        )?;
         let items = res
             .get("xrefs")
             .and_then(Value::as_array)
@@ -736,11 +799,16 @@ impl Engine for IdaEngine {
         })
     }
 
-    fn raw(&self, cmd: &str) -> Result<Value, String> {
-        self.call("raw", json!({ "cmd": cmd }))
+    fn raw(&self, _cmd: &str) -> Result<Value, String> {
+        Err("raw IDA Python execution is disabled for safety".to_string())
     }
 
     fn read_bytes(&self, addr: u64, len: usize) -> Result<Vec<u8>, String> {
+        if len > IDA_MAX_READ_BYTES {
+            return Err(format!(
+                "IDA read exceeds the {IDA_MAX_READ_BYTES}-byte safety limit"
+            ));
+        }
         let res = self.call("read_bytes", json!({ "addr": addr, "len": len }))?;
         let hex_str = res.get("bytes").and_then(Value::as_str).unwrap_or("");
         let mut bytes = Vec::new();
@@ -793,8 +861,8 @@ impl Engine for IdaEngine {
         }
         let data = std::fs::read(&self.path)
             .map_err(|e| format!("failed to read binary {}: {e}", self.path.display()))?;
-        let file = object::File::parse(&*data)
-            .map_err(|e| format!("failed to parse binary: {e}"))?;
+        let file =
+            object::File::parse(&*data).map_err(|e| format!("failed to parse binary: {e}"))?;
         let len = bytes.len() as u64;
         let mut file_offset = None;
         for section in file.sections() {
@@ -831,10 +899,13 @@ impl Engine for IdaEngine {
 
         // Also patch bytes in IDA database
         for (i, &b) in bytes.iter().enumerate() {
-            let _ = self.call(
-                "raw",
-                json!({ "cmd": format!("ida_bytes.patch_byte({:#x}, {:#x})", addr + i as u64, b) }),
-            );
+            let result = self.call("write_byte", json!({ "addr": addr + i as u64, "value": b }))?;
+            if result.get("success").and_then(Value::as_bool) != Some(true) {
+                return Err(format!(
+                    "IDA failed to patch byte at {:#x}",
+                    addr + i as u64
+                ));
+            }
         }
 
         Ok(())
@@ -856,12 +927,28 @@ impl Engine for IdaEngine {
 impl Drop for IdaEngine {
     fn drop(&mut self) {
         let _ = self.call("quit", json!({}));
+        if let Ok(mut child) = self._child.lock() {
+            stop_child(&mut child);
+        }
+        let _ = std::fs::remove_dir_all(&self.session_dir);
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
+
+    #[test]
+    fn check_dir_prefers_the_headless_idat_binary() {
+        let dir =
+            std::env::temp_dir().join(format!("recurse-ida-path-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create IDA path fixture");
+        std::fs::write(dir.join("ida64"), b"gui").expect("write GUI fixture");
+        std::fs::write(dir.join("idat64"), b"headless").expect("write headless fixture");
+        assert_eq!(check_dir_for_ida(&dir), Some(dir.join("idat64")));
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn find_ida_returns_valid_path_when_present() {

@@ -367,6 +367,16 @@ mod tests {
     }
 
     #[test]
+    fn anthropic_compatible_providers_use_the_messages_endpoint() {
+        let anthropic = find("anthropic").expect("Anthropic provider present");
+        assert_eq!(anthropic.auth, AuthKind::AnthropicApiKey);
+        assert!(anthropic.base_url.ends_with("/v1/messages"));
+        let zai = find("zai").expect("Z.AI provider present");
+        assert_eq!(zai.auth, AuthKind::AnthropicApiKey);
+        assert!(zai.base_url.ends_with("/v1/messages"));
+    }
+
+    #[test]
     fn find_misses_cleanly_on_an_unknown_id() {
         assert!(find("not-a-real-provider").is_none());
     }

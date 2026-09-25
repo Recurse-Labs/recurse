@@ -208,6 +208,8 @@ def handle_request(req):
     elif method == "read_bytes":
         addr = params.get("addr", 0)
         length = params.get("len", 0)
+        if length > 16 * 1024 * 1024:
+            return {"error": "read exceeds the 16 MiB safety limit"}
         raw = ida_bytes.get_bytes(addr, length, 0)
         if raw is None:
             res_bytes = bytearray()
@@ -297,11 +299,15 @@ def handle_request(req):
             return {"addr": ea}
         return {"addr": None}
 
+    elif method == "write_byte":
+        addr = params.get("addr", 0)
+        value = params.get("value", 0)
+        if not isinstance(value, int) or not 0 <= value <= 255:
+            return {"error": "write_byte value must be an integer byte"}
+        return {"success": bool(ida_bytes.patch_byte(addr, value))}
+
     elif method == "raw":
-        code = params.get("cmd", "")
-        loc = {}
-        exec(f"_res = ({code})", globals(), loc)
-        return {"result": str(loc.get("_res"))}
+        return {"error": "raw Python execution is disabled"}
 
     elif method == "quit":
         return {"quit": True}

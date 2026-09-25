@@ -159,7 +159,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 				if (prevSelected) {
 					const funcs = useAnalysisStore.getState().funcs;
 					const match = funcs.find(
-						(f) => f.addr === prevSelected.addr || f.name === prevSelected.name,
+						(f) =>
+							f.addr === prevSelected.addr ||
+							f.name === prevSelected.name,
 					);
 					if (match) {
 						useAnalysisStore.getState().selectFn(match);

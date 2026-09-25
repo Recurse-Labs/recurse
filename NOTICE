@@ -15,6 +15,9 @@ docs/backends.md):
   * An optional external engine is a separate program, invoked at runtime only
     when it is selected, and is licensed independently of this project
     (LGPL-3.0-only). It is not linked or bundled.
+  * The optional IDA engine invokes a separately installed IDA Pro process.
+    No IDA SDK, headers, runtime libraries, or IDA source code is linked or
+    bundled; the project-owned bridge communicates with it over local IPC.
 
 Crackme binaries fetched by crates/recurse-eval come from crackmes.one and are
 not distributed with this repository; they remain the property of their

@@ -131,6 +131,9 @@ Because the engine is a trait:
   separate program (mere aggregation), never linked. Its code is isolated in
   its own modules and only runs when it is selected — so a distribution can
   omit it without touching the rest of the tree.
+- IDA is an optional proprietary external process. Recurse contains no IDA SDK,
+  headers, libraries, or source; the project-owned bridge uses local IPC and is
+  only used when the user has separately installed and licensed IDA.
 - The opt-in large-binary consistency test also invokes `r2`/`objdump` as
   separate oracle processes. It contains no r2pipe, radare2, or binutils code
   and does not bundle those tools. The downloaded Youki fixture is not stored

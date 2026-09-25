@@ -26,9 +26,8 @@ fn open_engine(path: &std::path::Path, backend: BackendKind) -> Result<Box<dyn E
         BackendKind::R2 => {
             recurse_static::r2_backend::R2Engine::open(path).map(|e| Box::new(e) as Box<dyn Engine>)
         }
-        BackendKind::Ida => {
-            recurse_static::ida_backend::IdaEngine::open(path).map(|e| Box::new(e) as Box<dyn Engine>)
-        }
+        BackendKind::Ida => recurse_static::ida_backend::IdaEngine::open(path)
+            .map(|e| Box::new(e) as Box<dyn Engine>),
     }
 }
 

@@ -149,13 +149,13 @@ export function Header() {
 							<span className="text-2xs opacity-70">opt-in</span>
 						</DropdownMenuItem>
 						<DropdownMenuItem
-							className={cn(
-								backend === "ida" && chrome.selected,
-							)}
+							className={cn(backend === "ida" && chrome.selected)}
 							onClick={() => void setBackend("ida")}
 						>
 							<span className="flex-1">IDA Pro</span>
-							<span className="text-2xs opacity-70">Hex-Rays</span>
+							<span className="text-2xs opacity-70">
+								Hex-Rays
+							</span>
 						</DropdownMenuItem>
 					</DropdownMenuContent>
 				</DropdownMenu>

@@ -139,7 +139,8 @@ impl LlmConfig {
     /// with no extra headers; use [`LlmConfig::with_protocol`]/
     /// [`LlmConfig::with_extra_headers`] to change either.
     pub fn new(endpoint: String, api_key: Option<String>, model: String) -> Self {
-        let is_anthropic = endpoint.contains("/anthropic") || endpoint.contains("api.anthropic.com");
+        let is_anthropic =
+            endpoint.contains("/anthropic") || endpoint.contains("api.anthropic.com");
         let protocol = if is_anthropic {
             Protocol::AnthropicNative
         } else {

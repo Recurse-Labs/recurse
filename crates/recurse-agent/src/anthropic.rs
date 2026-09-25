@@ -291,7 +291,11 @@ pub(crate) async fn stream_http(
     tools: &[Value],
     emit: &mut (dyn FnMut(AgentEvent) + Send),
 ) -> Result<StreamOutcome, String> {
-    let oauth = config.api_key.as_deref().map(|k| k.starts_with("sk-ant-oat")).unwrap_or(false);
+    let oauth = config
+        .api_key
+        .as_deref()
+        .map(|k| k.starts_with("sk-ant-oat"))
+        .unwrap_or(false);
     let body = build_request(&config.model, messages, tools, oauth);
     let key = config.api_key.as_deref().unwrap_or("");
 
