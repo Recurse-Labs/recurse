@@ -40,7 +40,9 @@ async function pollIndexing(token: number) {
 		useBinaryStore.setState({ indexing: progress.indexing });
 		if (
 			progress.function_count > 0 &&
-			progress.function_count !== useAnalysisStore.getState().funcs.length
+			(progress.function_count !==
+				useAnalysisStore.getState().funcs.length ||
+				!progress.indexing)
 		) {
 			try {
 				const funcs = await api.functions();

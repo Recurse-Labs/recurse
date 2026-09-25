@@ -19,3 +19,8 @@ docs/backends.md):
 Crackme binaries fetched by crates/recurse-eval come from crackmes.one and are
 not distributed with this repository; they remain the property of their
 respective authors and are used only for local evaluation.
+
+The opt-in `large_binary_consistency` integration test invokes external
+`r2`, `objdump`, `curl`, and `tar` programs as separate processes. It does not
+link, vendor, or redistribute their code. The downloaded Youki v0.7.0 fixture
+is Apache-2.0 licensed and is cached outside the repository for the test.

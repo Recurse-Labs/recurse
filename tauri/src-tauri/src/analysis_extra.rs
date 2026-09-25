@@ -29,7 +29,10 @@ const FINDINGS_FUNCTION_CAP: usize = 400;
 /// Instructions per function scanned for capa mnemonic/number evidence.
 const FINDINGS_INSN_CAP: usize = 300;
 /// Functions considered for the whole-binary call graph.
-const CALL_GRAPH_FUNCTION_CAP: usize = 1500;
+const CALL_GRAPH_FUNCTION_CAP: usize = 500;
+/// Maximum edges returned to the UI. A dense binary can have millions of
+/// direct calls even after its function list is capped.
+const CALL_GRAPH_EDGE_CAP: usize = 6_000;
 
 pub(crate) fn locked_engine<'a>(
     state: &'a State<'_, AppState>,
@@ -429,6 +432,75 @@ pub fn semantic_similar(addr: u64, state: State<'_, AppState>) -> Result<Value, 
 // Whole-binary call graph.
 // ---------------------------------------------------------------------------
 
+/// Build a bounded call-graph response from a function list and call edges.
+///
+/// Only edges whose endpoints are both in the rendered function prefix are
+/// returned. This keeps the response internally consistent: React Flow and
+/// Dagre must never receive an edge pointing at a node that was omitted by the
+/// function cap. Duplicate edges and self-edges are removed while preserving
+/// the backend's stable order.
+fn build_call_graph(funcs: &[FunctionInfo], call_edges: &[(u64, u64)]) -> Value {
+    let mut selected: Vec<&FunctionInfo> = funcs.iter().take(CALL_GRAPH_FUNCTION_CAP).collect();
+    for required in ["entry0", "main"] {
+        let Some(function) = funcs.iter().find(|f| f.name == required) else {
+            continue;
+        };
+        if selected.iter().any(|f| f.addr == function.addr) {
+            continue;
+        }
+        if selected.len() == CALL_GRAPH_FUNCTION_CAP {
+            selected.pop();
+        }
+        selected.push(function);
+    }
+    let known: std::collections::HashSet<u64> = selected.iter().map(|f| f.addr).collect();
+    let mut edges = Vec::new();
+    let mut seen_edges = std::collections::HashSet::new();
+    let mut edge_limit_reached = false;
+    for (from, to) in call_edges {
+        if from == to || !known.contains(from) || !known.contains(to) {
+            continue;
+        }
+        if edges.len() >= CALL_GRAPH_EDGE_CAP {
+            edge_limit_reached = true;
+            break;
+        }
+        if seen_edges.insert((*from, *to)) {
+            edges.push(json!({"from": from, "to": to}));
+        }
+    }
+    let outgoing: std::collections::HashSet<u64> = edges
+        .iter()
+        .filter_map(|e| e.get("from"))
+        .filter_map(Value::as_u64)
+        .collect();
+    let called: std::collections::HashSet<u64> = edges
+        .iter()
+        .filter_map(|e| e.get("to"))
+        .filter_map(Value::as_u64)
+        .collect();
+    let nodes: Vec<Value> = selected
+        .iter()
+        .map(|f| {
+            json!({
+                "addr": f.addr,
+                "name": f.name,
+                "is_leaf": !outgoing.contains(&f.addr),
+                "is_called": called.contains(&f.addr),
+            })
+        })
+        .collect();
+    let graph_truncated = funcs.len() > CALL_GRAPH_FUNCTION_CAP
+        || call_edges.len() > CALL_GRAPH_EDGE_CAP
+        || edge_limit_reached;
+    json!({
+        "nodes": nodes,
+        "edges": edges,
+        "truncated": graph_truncated,
+        "total_functions": funcs.len(),
+    })
+}
+
 /// Aggregate call edges across the binary's functions (capped — see
 /// [`CALL_GRAPH_FUNCTION_CAP`]) into `{nodes, edges}`, for a global
 /// navigation view distinct from `function_graph`'s per-function CFG.
@@ -437,56 +509,18 @@ pub fn call_graph(state: State<'_, AppState>) -> Result<Value, String> {
     let guard = locked_engine(&state)?;
     let engine = require_engine(&guard)?;
     let funcs = engine.functions()?;
-    let truncated = funcs.len() > CALL_GRAPH_FUNCTION_CAP;
-    let known: std::collections::HashSet<u64> = funcs.iter().map(|f| f.addr).collect();
-
-    let mut edges: Vec<Value> = Vec::new();
-    let mut seen_edges: std::collections::HashSet<(u64, u64)> = std::collections::HashSet::new();
-    for f in funcs.iter().take(CALL_GRAPH_FUNCTION_CAP) {
-        let Ok(dis) = engine.function_disasm(f.addr) else {
-            continue;
-        };
-        for op in &dis.ops {
-            let is_call = matches!(op.kind.as_deref(), Some("call") | Some("icall"));
-            let Some(target) = op.jump else { continue };
-            if !is_call || !known.contains(&target) || target == f.addr {
-                continue;
-            }
-            if seen_edges.insert((f.addr, target)) {
-                edges.push(json!({"from": f.addr, "to": target}));
-            }
-        }
-    }
-
-    let called: std::collections::HashSet<u64> = edges
-        .iter()
-        .filter_map(|e| e.get("to").and_then(Value::as_u64))
-        .collect();
-    let nodes: Vec<Value> = funcs
-        .iter()
-        .take(CALL_GRAPH_FUNCTION_CAP)
-        .map(|f| {
-            json!({
-                "addr": f.addr,
-                "name": f.name,
-                "is_leaf": !edges.iter().any(|e| e.get("from").and_then(Value::as_u64) == Some(f.addr)),
-                "is_called": called.contains(&f.addr),
-            })
-        })
-        .collect();
-
-    Ok(json!({
-        "nodes": nodes,
-        "edges": edges,
-        "truncated": truncated,
-        "total_functions": funcs.len(),
-    }))
+    let call_edges = engine.call_edges(CALL_GRAPH_FUNCTION_CAP, CALL_GRAPH_EDGE_CAP + 1)?;
+    Ok(build_call_graph(&funcs, &call_edges))
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    use super::extract_hex_numbers;
+    use super::{
+        build_call_graph, extract_hex_numbers, CALL_GRAPH_EDGE_CAP, CALL_GRAPH_FUNCTION_CAP,
+    };
+    use recurse_agent::engine::FunctionInfo;
+    use serde_json::Value;
 
     #[test]
     fn extract_hex_numbers_finds_every_literal() {
@@ -500,6 +534,100 @@ mod tests {
         let mut out = Vec::new();
         extract_hex_numbers("add eax, 10; jmp 0x", &mut out);
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn build_call_graph_filters_omitted_targets_and_deduplicates() {
+        let funcs = vec![
+            FunctionInfo {
+                addr: 0x1000,
+                name: "caller".into(),
+                size: None,
+                nbbs: None,
+                edges: None,
+                signature: None,
+            },
+            FunctionInfo {
+                addr: 0x2000,
+                name: "callee".into(),
+                size: None,
+                nbbs: None,
+                edges: None,
+                signature: None,
+            },
+        ];
+        let graph = build_call_graph(
+            &funcs,
+            &[
+                (0x1000, 0x2000),
+                (0x1000, 0x2000),
+                (0x2000, 0x3000),
+                (0x1000, 0x1000),
+            ],
+        );
+        assert_eq!(graph["edges"].as_array().unwrap().len(), 1);
+        assert_eq!(graph["nodes"][0]["is_leaf"], false);
+        assert_eq!(graph["nodes"][0]["is_called"], false);
+        assert_eq!(graph["nodes"][1]["is_leaf"], true);
+        assert_eq!(graph["nodes"][1]["is_called"], true);
+        assert_eq!(graph["truncated"], false);
+    }
+
+    #[test]
+    fn build_call_graph_keeps_startup_nodes_when_they_are_beyond_the_cap() {
+        let mut funcs: Vec<FunctionInfo> = (0..=CALL_GRAPH_FUNCTION_CAP as u64)
+            .map(|addr| FunctionInfo {
+                addr,
+                name: format!("fcn_{addr:x}"),
+                size: None,
+                nbbs: None,
+                edges: None,
+                signature: None,
+            })
+            .collect();
+        funcs[0].name = "entry0".into();
+        funcs[CALL_GRAPH_FUNCTION_CAP].name = "main".into();
+        let graph = build_call_graph(&funcs, &[(0, CALL_GRAPH_FUNCTION_CAP as u64)]);
+        let names: Vec<&str> = graph["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|node| node.get("name").and_then(Value::as_str))
+            .collect();
+        assert!(names.contains(&"entry0"));
+        assert!(names.contains(&"main"));
+        assert_eq!(graph["edges"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn build_call_graph_marks_empty_and_edge_capped_responses() {
+        let funcs: Vec<FunctionInfo> = (0..200)
+            .map(|addr| FunctionInfo {
+                addr,
+                name: format!("f{addr}"),
+                size: None,
+                nbbs: None,
+                edges: None,
+                signature: None,
+            })
+            .collect();
+        let edges: Vec<(u64, u64)> = (0..200)
+            .flat_map(|from| (0..200).map(move |to| (from, to)))
+            .filter(|(from, to)| from != to)
+            .take(CALL_GRAPH_EDGE_CAP + 1)
+            .collect();
+        let exact = build_call_graph(&funcs, &edges[..CALL_GRAPH_EDGE_CAP]);
+        assert_eq!(
+            exact["edges"].as_array().unwrap().len(),
+            CALL_GRAPH_EDGE_CAP
+        );
+        assert_eq!(exact["truncated"], false);
+        let capped = build_call_graph(&funcs, &edges);
+        assert_eq!(
+            capped["edges"].as_array().unwrap().len(),
+            CALL_GRAPH_EDGE_CAP
+        );
+        assert_eq!(capped["truncated"], true);
     }
 
     #[test]
