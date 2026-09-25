@@ -1,12 +1,12 @@
 # `recurse-mcp` — standalone MCP server
 
-`cargo run -p recurse-mcp -- <binary-path> [--backend native|r2]` opens one
+`cargo run -p recurse-mcp -- <binary-path> [--backend native|r2|ida]` opens one
 binary with `recurse_static`'s `Engine` and serves it over
 [MCP](https://modelcontextprotocol.io) (stdio, JSON-RPC 2.0, one object per
 line) until stdin closes. No Tauri, no desktop UI, no IDA seat, no Python
 bridge — any MCP-capable agent (Claude Code, Cursor, Claude Desktop, a
 custom harness) points straight at the binary and drives the exact same
-native (or r2) engine `recurse-agent`'s bundled chat panel uses.
+native (or r2 / ida) engine `recurse-agent`'s bundled chat panel uses.
 
 ## Why this exists
 
@@ -34,8 +34,8 @@ Claude Code / Claude Desktop / Cursor `mcpServers` config:
 }
 ```
 
-Add `"--backend", "r2"` to `args` to drive r2 instead of the native engine
-(r2 must be on `PATH`; see [backends.md](backends.md)).
+Add `"--backend", "r2"` (or `"ida"`) to `args` to drive an alternative engine
+instead of native (see [backends.md](backends.md)).
 
 ## Protocol surface
 

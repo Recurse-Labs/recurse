@@ -486,12 +486,17 @@ pub fn get_backend() -> BackendStatus {
     }
 }
 
-/// Persist the selected analysis backend (`native` or r2). Takes
-/// the next binary open.
+/// Persist the selected analysis backend (`native`, `r2`, or `ida`).
+/// Returns an error if the requested backend is not available on the system.
 #[tauri::command]
 pub fn set_backend(backend: String) -> Result<(), String> {
     let parsed = recurse_agent::engine::BackendKind::parse(&backend)
         .ok_or_else(|| format!("unknown backend: {backend}"))?;
+    if parsed == recurse_agent::engine::BackendKind::Ida
+        && recurse_agent::ida_backend::find_ida_executable().is_none()
+    {
+        return Err("IDA Pro executable not found. Please install IDA in standard paths or set RECURSE_IDA_PATH.".to_string());
+    }
     config::set_backend(Some(parsed.as_str().to_string()))
 }
 

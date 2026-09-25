@@ -107,7 +107,7 @@ pub struct ProviderStatus {
 
 fn auth_kind_str(kind: AuthKind) -> &'static str {
     match kind {
-        AuthKind::ApiKey => "api_key",
+        AuthKind::ApiKey | AuthKind::AnthropicApiKey => "api_key",
         AuthKind::OAuthAnthropic => "oauth_anthropic",
         AuthKind::OAuthGithubCopilot => "oauth_github_copilot",
         AuthKind::Local => "local",
@@ -147,6 +147,8 @@ pub fn list_status() -> Vec<ProviderStatus> {
 /// - An `ApiKey`/`Local` provider: build an OpenAI-compatible config
 ///   pointed at that provider's base URL, with its stored key (or none,
 ///   for a local server).
+/// - `AnthropicApiKey`: build a [`Protocol::AnthropicNative`] config
+///   pointed at that provider's base URL with its stored API key.
 /// - `OAuthAnthropic`: refresh the stored token if it's expiring, then
 ///   build an [`Protocol::AnthropicNative`] config against Anthropic's
 ///   own Messages API endpoint.
@@ -176,6 +178,14 @@ pub async fn resolve_llm_config() -> LlmConfig {
                 _ => None,
             };
             LlmConfig::new(preset.base_url.to_string(), key, model)
+        }
+        AuthKind::AnthropicApiKey => {
+            let key = match load_credential(preset.id) {
+                Credential::ApiKey(k) => Some(k),
+                _ => None,
+            };
+            LlmConfig::new(preset.base_url.to_string(), key, model)
+                .with_protocol(Protocol::AnthropicNative)
         }
         AuthKind::OAuthAnthropic => {
             let token = match load_credential(preset.id) {

@@ -19,7 +19,7 @@ engine never touches the agent loop, the storefront, or the eval harness.
   `FunctionGraph`, `StringRef`, `Import`, `Xref`, `Decompilation`). Their JSON
   field names are exactly what the UI renders, so the frontend is
   backend-agnostic too.
-- `BackendKind` (`native` | `r2`), selected from `RECURSE_BACKEND` or the
+- `BackendKind` (`native` | `r2` | `ida`), selected from `RECURSE_BACKEND` or the
   stored config. The default is `native`: the in-process, permissive,
   multi-architecture engine.
 - The backend-neutral agent tool (`analyze`) and its dispatcher,
@@ -85,6 +85,13 @@ console. Install it and select it as the engine (settings menu, or
 a separate program, is never linked or bundled, and is never required by the
 build. When selected, the `decompile` and `raw` ops become available and its
 capabilities are advertised to the agent and UI.
+
+### `ida` — IDA Pro (opt-in)
+
+**IDA Pro** (`ida`) is supported as an opt-in analysis engine driving headless IDA
+(`idat`) over a local IPC socket. It provides Hex-Rays decompilation, CFG, xrefs,
+and raw IDAPython execution. Select it via settings or `RECURSE_BACKEND=ida`.
+Auto-detected from standard system paths, or configured via `RECURSE_IDA_PATH`.
 
 ## Crates and why
 

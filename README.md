@@ -4,7 +4,7 @@ Agentic reverse engineering environment — a Ghidra-class desktop app in the sp
 "Cursor for reverse engineering". Built with **Tauri 2** (React + TypeScript frontend) on top
 of a **pluggable analysis backend**. The default is a **pure-Rust native engine** — no
 external process, no copyleft dependency, multi-architecture via Capstone. You can also run
-analysis through **r2** (radare2): install it, select it as the engine, and the whole app —
+analysis through **r2** (radare2) or **IDA Pro**: select either engine, and the whole app —
 agent tools and UI — drives it instead. The agent tool and the UI are backend-agnostic —
 see [docs/backends.md](docs/backends.md).
 
@@ -79,6 +79,7 @@ engine is a choice, not a hard dependency:
 - **r2** (radare2) — supported as an **opt-in** alternative for installs that want its own,
   more complete decompiler or a raw console. Install r2 and select it as the engine; it runs
   as a separate process and is never linked or bundled with Recurse.
+- **IDA Pro** (`ida`) — opt-in headless analysis and Hex-Rays decompilation via `idat`.
 
 Pick with the settings menu, the `RECURSE_BACKEND` environment variable, or the stored
 config. The agent gets one backend-neutral `analyze` tool (`functions`, `disasm`, `graph`,
@@ -134,6 +135,8 @@ as the analysis engine instead, install it and select it (the settings menu, or
 `RECURSE_BACKEND=r2`); Recurse drives the `r2` binary on your `PATH`. r2 is optional, is
 never required by the build, and is never distributed with Recurse — bring your own install.
 
+To use **IDA Pro** (`ida`), select it or set `RECURSE_BACKEND=ida` (tested on Linux with IDA Pro 9.1). It is auto-detected from standard install paths or `PATH`. For custom paths, set `RECURSE_IDA_PATH` (Linux: `export RECURSE_IDA_PATH=/opt/ida-pro-9.1`, Windows: `set RECURSE_IDA_PATH="C:\Program Files\IDA Pro 9.1"`).
+
 ### 3. Tauri Linux system dependencies
 
 Debian/Ubuntu/Pop!_OS:
@@ -149,10 +152,10 @@ Other distros: follow the official
 
 ### 4. Decompiler
 
-Both engines provide one: `native` renders pseudocode via `recurse-vtil`
+All engines provide one: `native` renders pseudocode via `recurse-vtil`
 (lift → optimize → structure — see [docs/vtil-lift.md](docs/vtil-lift.md)),
-nothing to install; **r2** can provide its own, more complete decompiler
-when its plugin is installed.
+nothing to install; **r2** can provide its own decompiler when its plugin
+is installed; **IDA Pro** provides Hex-Rays.
 
 ## Build
 
@@ -221,7 +224,7 @@ just eval-run     # run the tier — the only way to execute an eval YAML
 the agent. Endpoint + key go in `crates/recurse-eval/.env` (copy `.env.example`).
 Each run writes `target/eval-traces/<tier>/<backend>/run.log` (the full narrative)
 plus one `<hexid>.json` per task with the complete per-turn conversation. The
-backend (`native` or `r2`) is selectable per run — see the eval README.
+backend (`native`, `r2`, or `ida`) is selectable per run — see the eval README.
 
 ## Agent LLM
 
