@@ -1,6 +1,7 @@
 /** Class names backed by tokens in `src/chrome.css`. */
 export const chrome = {
 	bar: "ui-bar",
+	headerActions: "ui-header-actions",
 	sep: "ui-sep",
 	seg: "ui-seg",
 	press: "ui-press",

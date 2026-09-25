@@ -19,7 +19,12 @@ import dagre from "@dagrejs/dagre";
 import { api } from "@/api";
 import { cn } from "@/lib/utils";
 import { callTarget } from "@/lib/calls";
-import { DisasmComment, DisasmInstr, splitComment } from "@/lib/disasm";
+import {
+	DisasmComment,
+	DisasmInstr,
+	formatInstructionBytes,
+	splitComment,
+} from "@/lib/disasm";
 import { useAnalysisStore } from "@/store/analysisStore";
 import type { Function, FunctionGraph, GraphOp } from "@/types";
 
@@ -66,7 +71,9 @@ function addrColumns(ops: BlockOp[]): number {
 /** Widest byte column for a block, in characters (never below the header). */
 function bytesColumns(ops: BlockOp[]): number {
 	let bytes = MIN_BYTES_CH;
-	for (const op of ops) bytes = Math.max(bytes, (op.bytes ?? "").length);
+	for (const op of ops) {
+		bytes = Math.max(bytes, formatInstructionBytes(op.bytes).length);
+	}
 	return bytes;
 }
 
@@ -78,7 +85,9 @@ function blockColumns(ops: BlockOp[]): string {
 /** Node width that fits the longest instruction line without trimming. */
 function blockWidth(ops: BlockOp[]): number {
 	let instr = "Instruction".length;
-	for (const op of ops) instr = Math.max(instr, (op.disasm ?? "").length);
+	for (const op of ops) {
+		instr = Math.max(instr, (op.disasm ?? "").length);
+	}
 	const contentCh = addrColumns(ops) + bytesColumns(ops) + instr;
 	return Math.max(
 		BLOCK_W,
@@ -141,10 +150,10 @@ function BlockNodeComponent({ data }: NodeProps<BlockNode>) {
 								{fmtAddr(op.addr)}
 							</span>
 							<span
-								className="text-asm-bytes overflow-hidden"
+								className="text-asm-bytes overflow-hidden whitespace-pre"
 								title="Machine code bytes (hex)"
 							>
-								{op.bytes ?? ""}
+								{formatInstructionBytes(op.bytes)}
 							</span>
 							<span
 								className={cn(

@@ -2,6 +2,7 @@ import { ChevronRight, Loader2 } from "lucide-react";
 import {
 	lazy,
 	Suspense,
+	useEffect,
 	useLayoutEffect,
 	useMemo,
 	useRef,
@@ -10,14 +11,34 @@ import {
 } from "react";
 
 import { Button } from "@/components/ui/button";
+import {
+	DropdownMenu,
+	DropdownMenuCheckboxItem,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuLabel,
+	DropdownMenuSeparator,
+	DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { DebugPanel } from "@/components/DebugPanel";
+import {
+	DisasmBytes,
+	readDisasmView,
+	storeDisasmView,
+	type DisasmViewOptions,
+} from "@/components/DisasmBytes";
 import { PanelErrorBoundary } from "@/components/PanelErrorBoundary";
 import { ReconPanel } from "@/components/ReconPanel";
 import { cn } from "@/lib/utils";
 import { chrome } from "@/lib/chrome";
 import { callTarget } from "@/lib/calls";
-import { DisasmComment, DisasmInstr, splitComment } from "@/lib/disasm";
+import {
+	DisasmComment,
+	DisasmInstr,
+	formatInstructionBytes,
+	splitComment,
+} from "@/lib/disasm";
 import { api } from "@/api";
 import { useAnalysisStore } from "@/store/analysisStore";
 import { useBinaryStore } from "@/store/binaryStore";
@@ -111,10 +132,155 @@ function highlight(
 	return spans;
 }
 
+const DISPLAY_TOGGLES: { key: keyof DisasmViewOptions; label: string }[] = [
+	{ key: "showRawBytes", label: "Section bytes (hex)" },
+	{ key: "showAscii", label: "ASCII column" },
+	{ key: "showAddresses", label: "Virtual addresses" },
+	{ key: "showInstructionBytes", label: "Instruction bytes" },
+	{ key: "showComments", label: "Comments" },
+	{ key: "showFunctionMarkers", label: "Function markers" },
+	{ key: "showSectionHeaders", label: "Section / segment metadata" },
+	{ key: "wideSpacing", label: "Horizontal whitespace" },
+];
+
+/**
+ * Keep every disassembly control in one compact menu so the toolbar remains
+ * readable at high zoom levels. View switches, output filters, and one-shot
+ * analysis actions share the same affordance without changing their behavior.
+ *
+ * @example
+ * <DisasmActionsMenu viewMode="linear" onViewModeChange={setViewMode} />
+ */
+function DisasmActionsMenu({
+	viewMode,
+	viewOptions,
+	selected,
+	canDecompile,
+	decompiling,
+	xrefsOpen,
+	toolBusy,
+	asmLoading,
+	onViewModeChange,
+	onOptionChange,
+	onDecompile,
+	onToggleXrefs,
+	onGenerateSignature,
+	onShowSimilar,
+	onIndexBinary,
+	onRefresh,
+}: {
+	viewMode: "linear" | "graph";
+	viewOptions: DisasmViewOptions;
+	selected: boolean;
+	canDecompile: boolean;
+	decompiling: boolean;
+	xrefsOpen: boolean;
+	toolBusy: boolean;
+	asmLoading: boolean;
+	onViewModeChange: (mode: "linear" | "graph") => void;
+	onOptionChange: (key: keyof DisasmViewOptions, value: boolean) => void;
+	onDecompile: () => void;
+	onToggleXrefs: () => void;
+	onGenerateSignature: () => void;
+	onShowSimilar: () => void;
+	onIndexBinary: () => void;
+	onRefresh: () => void;
+}) {
+	return (
+		<DropdownMenu>
+			<DropdownMenuTrigger asChild>
+				<Button
+					variant="toolbar"
+					size="sm"
+					title="Disassembly view and actions"
+				>
+					View
+				</Button>
+			</DropdownMenuTrigger>
+			<DropdownMenuContent align="end" className="w-56">
+				<DropdownMenuLabel>View</DropdownMenuLabel>
+				<DropdownMenuItem
+					aria-checked={viewMode === "linear"}
+					onSelect={() => onViewModeChange("linear")}
+				>
+					<span className="text-brand w-3">
+						{viewMode === "linear" ? "✓" : ""}
+					</span>
+					Linear
+				</DropdownMenuItem>
+				<DropdownMenuItem
+					aria-checked={viewMode === "graph"}
+					onSelect={() => onViewModeChange("graph")}
+				>
+					<span className="text-brand w-3">
+						{viewMode === "graph" ? "✓" : ""}
+					</span>
+					Graph
+				</DropdownMenuItem>
+				<DropdownMenuSeparator />
+				<DropdownMenuLabel>Output filters</DropdownMenuLabel>
+				{DISPLAY_TOGGLES.map(({ key, label }) => (
+					<DropdownMenuCheckboxItem
+						key={key}
+						checked={viewOptions[key]}
+						onCheckedChange={(checked) =>
+							onOptionChange(key, checked === true)
+						}
+					>
+						{label}
+					</DropdownMenuCheckboxItem>
+				))}
+				<DropdownMenuSeparator />
+				<DropdownMenuLabel>Actions</DropdownMenuLabel>
+				<DropdownMenuItem
+					disabled={!canDecompile || !selected || decompiling}
+					onSelect={onDecompile}
+				>
+					{decompiling ? "Decompiling…" : "Decompile"}
+				</DropdownMenuItem>
+				<DropdownMenuItem disabled={!selected} onSelect={onToggleXrefs}>
+					{xrefsOpen ? "Hide xrefs" : "Show xrefs"}
+				</DropdownMenuItem>
+				<DropdownMenuItem
+					disabled={!selected || toolBusy}
+					onSelect={onGenerateSignature}
+				>
+					Generate signature
+				</DropdownMenuItem>
+				<DropdownMenuItem
+					disabled={!selected || toolBusy}
+					onSelect={onShowSimilar}
+				>
+					Find similar
+				</DropdownMenuItem>
+				<DropdownMenuItem disabled={toolBusy} onSelect={onIndexBinary}>
+					Index binary
+				</DropdownMenuItem>
+				<DropdownMenuItem disabled={asmLoading} onSelect={onRefresh}>
+					{asmLoading ? "Reloading…" : "Reload"}
+				</DropdownMenuItem>
+			</DropdownMenuContent>
+		</DropdownMenu>
+	);
+}
+
+/**
+ * Render one disassembly instruction with optional source columns and the
+ * active-row treatment used by the function listing.
+ *
+ * @example
+ * <OpRow op={op} active={op.addr === selectedAddress} />
+ */
 function OpRow({
 	op,
 	target,
 	onGoTo,
+	onSelect,
+	active,
+	showAddress,
+	showBytes,
+	showComments,
+	wideSpacing,
 }: {
 	op: {
 		addr: number;
@@ -126,6 +292,12 @@ function OpRow({
 	};
 	target?: Function | null;
 	onGoTo?: (f: Function) => void;
+	onSelect?: (addr: number) => void;
+	active?: boolean;
+	showAddress?: boolean;
+	showBytes?: boolean;
+	showComments?: boolean;
+	wideSpacing?: boolean;
 }) {
 	const text = op.text ?? op.disasm ?? "";
 	const { instr, comment } = splitComment(text);
@@ -134,28 +306,37 @@ function OpRow({
 		<div
 			className={cn(
 				chrome.row,
-				"gap-3 pl-3",
+				"min-w-max pl-3",
+				wideSpacing ? "gap-5" : "gap-3",
+				active && "ui-selected border-brand border-l-2 pl-[10px]",
 				clickable && "hover:bg-accent/70 cursor-pointer",
 			)}
-			onClick={clickable && onGoTo ? () => onGoTo(target) : undefined}
+			onClick={() => {
+				onSelect?.(op.addr);
+				if (clickable && onGoTo && target) onGoTo(target);
+			}}
 			title={
 				clickable
-					? `Go to ${target.name ?? fmtAddr(target.addr)}`
-					: undefined
+					? `Select and go to ${target.name ?? fmtAddr(target.addr)}`
+					: "Select instruction"
 			}
 		>
-			<span
-				className="nums text-asm-addr min-w-[9ch] shrink-0 font-mono"
-				title="Virtual address"
-			>
-				{fmtAddr(op.addr)}
-			</span>
-			<span
-				className="text-asm-bytes min-w-[16ch] shrink-0 font-mono"
-				title="Machine code bytes (hex)"
-			>
-				{op.bytes ?? ""}
-			</span>
+			{showAddress !== false && (
+				<span
+					className="nums text-asm-addr w-[19ch] shrink-0 font-mono"
+					title="Virtual address"
+				>
+					{`.text:${op.addr.toString(16).toUpperCase().padStart(8, "0")}`}
+				</span>
+			)}
+			{showBytes !== false && (
+				<span
+					className="text-asm-bytes w-[50ch] shrink-0 pr-2 font-mono whitespace-pre"
+					title="Machine code bytes (hex)"
+				>
+					{formatInstructionBytes(op.bytes)}
+				</span>
+			)}
 			<span
 				className={cn(
 					"text-foreground",
@@ -165,11 +346,11 @@ function OpRow({
 				title="Disassembly (mnemonic + operands)"
 			>
 				{instr && <DisasmInstr text={instr} />}
-				<DisasmComment comment={comment} />
+				{showComments !== false && <DisasmComment comment={comment} />}
 				{typeof op.jump === "number" && (
 					<span className="text-asm-jump"> → {fmtAddr(op.jump)}</span>
 				)}
-				{typeof op.ptr === "number" && (
+				{showComments !== false && typeof op.ptr === "number" && (
 					<span className="text-asm-jump">
 						{" "}
 						; [{fmtAddr(op.ptr)}]
@@ -288,6 +469,65 @@ export function CenterPanel() {
 	const [xrefsError, setXrefsError] = useState<string | null>(null);
 	const [stringQuery, setStringQuery] = useState("");
 	const [importQuery, setImportQuery] = useState("");
+	const [viewOptions, setViewOptions] =
+		useState<DisasmViewOptions>(readDisasmView);
+	const [rawState, setRawState] = useState<{
+		key: string | null;
+		bytes: number[];
+		error: string | null;
+	}>({ key: null, bytes: [], error: null });
+	const [insnSelection, setInsnSelection] = useState<{
+		address: number;
+		instruction: number | null;
+	}>({ address: selectedAddr ?? 0, instruction: selectedAddr ?? null });
+	const selectedSize = selected?.size ?? asm?.size ?? 0;
+	const sectionName = ".text";
+	const activeInsn =
+		insnSelection.address === selectedAddr
+			? insnSelection.instruction
+			: (selectedAddr ?? null);
+	const rawKey =
+		selected && viewOptions.showRawBytes && selectedSize > 0
+			? `${selected.addr}:${selectedSize}`
+			: null;
+	const rawBytes = rawState.key === rawKey ? rawState.bytes : [];
+	const rawBytesLoading = rawKey !== null && rawState.key !== rawKey;
+	const rawBytesError = rawState.key === rawKey ? rawState.error : null;
+
+	const updateViewOption = (key: keyof DisasmViewOptions, value: boolean) => {
+		setViewOptions((current) => {
+			const next = { ...current, [key]: value };
+			storeDisasmView(next);
+			return next;
+		});
+	};
+
+	useEffect(() => {
+		let cancelled = false;
+		if (!rawKey || !selected)
+			return () => {
+				cancelled = true;
+			};
+		void api
+			.readBytes(selected.addr, Math.min(selectedSize, 128))
+			.then((bytes) => {
+				if (!cancelled) {
+					setRawState({ key: rawKey, bytes, error: null });
+				}
+			})
+			.catch((error) => {
+				if (!cancelled) {
+					setRawState({
+						key: rawKey,
+						bytes: [],
+						error: String(error),
+					});
+				}
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [rawKey, selected, selectedAddr, selectedSize]);
 
 	// Large Rust binaries can carry 100k+ strings (youki: 113k). Rendering
 	// them all freezes the webview, so filter first and cap the row count.
@@ -436,84 +676,29 @@ export function CenterPanel() {
 						</>
 					)}
 					<div className="ml-auto flex items-center gap-1">
-						<div className="ui-seg" role="group" aria-label="View">
-							<button
-								type="button"
-								aria-pressed={viewMode === "linear"}
-								onClick={() => setViewMode("linear")}
-								title="Linear disassembly"
-							>
-								Linear
-							</button>
-							<button
-								type="button"
-								aria-pressed={viewMode === "graph"}
-								onClick={() => setViewMode("graph")}
-								title="Control-flow graph (pan/zoom)"
-							>
-								Graph
-							</button>
-						</div>
-						{capabilities?.decompile !== false && (
-							<Button
-								variant="toolbar"
-								size="sm"
-								onClick={decompile}
-								disabled={decompiling || !selected}
-							>
-								{decompiling ? "Decompiling…" : "Decompile"}
-							</Button>
-						)}
-						<Button
-							variant="toolbar"
-							size="sm"
-							className="ui-press"
-							aria-pressed={xrefsOpen}
-							onClick={toggleXrefs}
-							disabled={!selected}
-							title="Show incoming cross-references"
-						>
-							Xrefs
-						</Button>
-						<Button
-							variant="toolbar"
-							size="sm"
-							onClick={() => void runGenerateSignature()}
-							disabled={!selected || toolBusy}
-							title="Generate a wildcarded byte-pattern signature for this function"
-						>
-							Sig
-						</Button>
-						<Button
-							variant="toolbar"
-							size="sm"
-							onClick={() => void runShowSimilar()}
-							disabled={!selected || toolBusy}
-							title="Find similar functions in the cross-binary corpus"
-						>
-							Similar
-						</Button>
-						<Button
-							variant="toolbar"
-							size="sm"
-							onClick={() => void runIndexBinary()}
-							disabled={toolBusy}
-							title="Index every function of this binary into the similarity corpus"
-						>
-							Index
-						</Button>
-						<Button
-							variant="toolbar"
-							size="sm"
-							onClick={refreshDisasm}
-							disabled={asmLoading}
-							title="Reload"
-						>
-							{asmLoading ? "Loading" : "Reload"}
-						</Button>
+						<DisasmActionsMenu
+							viewMode={viewMode}
+							viewOptions={viewOptions}
+							selected={!!selected}
+							canDecompile={capabilities?.decompile !== false}
+							decompiling={decompiling}
+							xrefsOpen={xrefsOpen}
+							toolBusy={toolBusy}
+							asmLoading={asmLoading}
+							onViewModeChange={setViewMode}
+							onOptionChange={updateViewOption}
+							onDecompile={() => void decompile()}
+							onToggleXrefs={toggleXrefs}
+							onGenerateSignature={() =>
+								void runGenerateSignature()
+							}
+							onShowSimilar={() => void runShowSimilar()}
+							onIndexBinary={() => void runIndexBinary()}
+							onRefresh={() => void refreshDisasm()}
+						/>
 					</div>
 				</div>
-				)}
+			)}
 			{toolResult && (
 				<div className="border-border bg-muted/30 flex items-start justify-between gap-3 border-b px-3 py-2">
 					<div className="min-w-0 flex-1">
@@ -614,6 +799,33 @@ export function CenterPanel() {
 							)}
 							{tab === "disasm" && (
 								<>
+									{viewOptions.showRawBytes && selected && (
+										<DisasmBytes
+											address={selected.addr}
+											bytes={rawBytes}
+											size={selectedSize}
+											loading={rawBytesLoading}
+											error={rawBytesError}
+											showAscii={viewOptions.showAscii}
+										/>
+									)}
+									{viewOptions.showSectionHeaders &&
+										selected && (
+											<div className="text-asm-number bg-card px-3 py-1 font-mono text-[11px]">
+												; segment {sectionName} r-x{" "}
+												{selected.addr
+													.toString(16)
+													.toUpperCase()
+													.padStart(8, "0")}{" "}
+												-{" "}
+												{(selected.addr + selectedSize)
+													.toString(16)
+													.toUpperCase()
+													.padStart(8, "0")}{" "}
+												(0x{selectedSize.toString(16)}{" "}
+												bytes)
+											</div>
+										)}
 									{xrefsOpen &&
 										selected &&
 										xrefsAddress === selectedAddr && (
@@ -690,6 +902,16 @@ export function CenterPanel() {
 											</div>
 										)}
 									<div className="font-mono text-xs">
+										{viewOptions.showFunctionMarkers &&
+											selected && (
+												<div className="text-asm-number px-3 py-1">
+													;{" "}
+													{selected.name ??
+														selected.signature ??
+														"function"}{" "}
+													proc
+												</div>
+											)}
 										{asmLoading && (
 											<div className="text-muted-foreground px-3 py-3">
 												disassembling…
@@ -713,12 +935,16 @@ export function CenterPanel() {
 											!asmLoading &&
 											(asm?.ops?.length ?? 0) > 0 && (
 												<div className="border-border bg-card text-2xs flex gap-3 border-b px-3 py-1 font-semibold tracking-wider uppercase">
-													<span className="text-asm-addr w-[9ch] shrink-0">
-														Address
-													</span>
-													<span className="text-asm-bytes w-[16ch] shrink-0">
-														Bytes
-													</span>
+													{viewOptions.showAddresses && (
+														<span className="text-asm-addr w-[19ch] shrink-0">
+															Address
+														</span>
+													)}
+													{viewOptions.showInstructionBytes && (
+														<span className="text-asm-bytes w-[50ch] shrink-0 pr-2">
+															Bytes
+														</span>
+													)}
 													<span className="text-muted-foreground">
 														Instruction
 													</span>
@@ -733,6 +959,27 @@ export function CenterPanel() {
 													funcByAddr,
 												)}
 												onGoTo={selectFn}
+												onSelect={(address) =>
+													setInsnSelection({
+														address:
+															selectedAddr ??
+															address,
+														instruction: address,
+													})
+												}
+												active={activeInsn === op.addr}
+												showAddress={
+													viewOptions.showAddresses
+												}
+												showBytes={
+													viewOptions.showInstructionBytes
+												}
+												showComments={
+													viewOptions.showComments
+												}
+												wideSpacing={
+													viewOptions.wideSpacing
+												}
 											/>
 										))}
 									</div>

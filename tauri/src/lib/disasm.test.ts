@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { isRegister, splitComment, tokenizeAsm } from "./disasm";
+import {
+	formatInstructionBytes,
+	isRegister,
+	splitComment,
+	tokenizeAsm,
+} from "./disasm";
 
 describe("splitComment", () => {
 	it("splits an instruction from its string comment", () => {
@@ -22,6 +27,19 @@ describe("splitComment", () => {
 			instr: "push rbp",
 			comment: "",
 		});
+	});
+});
+
+describe("formatInstructionBytes", () => {
+	it("adds spaces between hexadecimal byte pairs", () => {
+		expect(formatInstructionBytes("48b801000000")).toBe(
+			"48 b8 01 00 00 00",
+		);
+	});
+
+	it("keeps already formatted bytes stable and handles empty values", () => {
+		expect(formatInstructionBytes("90 c3")).toBe("90 c3");
+		expect(formatInstructionBytes(undefined)).toBe("");
 	});
 });
 

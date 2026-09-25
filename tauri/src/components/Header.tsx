@@ -63,12 +63,12 @@ export function Header() {
 				</div>
 			)}
 
-			<div className="ml-auto flex items-center">
+			<div className={cn("ml-auto", chrome.headerActions)}>
 				{binary && (
 					<Button
 						variant="toolbar"
 						size="sm"
-						className={chrome.press}
+						className={cn("rounded-[2px]", chrome.press)}
 						aria-pressed={chatOpen}
 						onClick={toggleChat}
 						title="Toggle agent chat (Ctrl+L)"
@@ -80,15 +80,19 @@ export function Header() {
 					<Button
 						variant="toolbar"
 						size="sm"
+						className="rounded-[2px]"
 						onClick={close}
 						disabled={busy}
 					>
 						Close
 					</Button>
 				)}
+				{binary && <span className={chrome.sep} aria-hidden="true" />}
 				<Button
 					variant="ghost"
 					size="icon"
+					className="rounded-[2px]"
+					aria-label="Toggle theme"
 					onClick={toggleTheme}
 					title={
 						theme === "dark"
@@ -100,7 +104,12 @@ export function Header() {
 				</Button>
 				<DropdownMenu>
 					<DropdownMenuTrigger asChild>
-						<Button variant="toolbar" size="sm">
+						<Button
+							variant="toolbar"
+							size="sm"
+							className="rounded-[2px]"
+							aria-label="Open settings"
+						>
 							Settings
 						</Button>
 					</DropdownMenuTrigger>

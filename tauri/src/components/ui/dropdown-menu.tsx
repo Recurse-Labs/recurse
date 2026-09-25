@@ -76,6 +76,30 @@ function DropdownMenuShortcut({
 	return <span className={cn("ui-kbd", className)} {...props} />;
 }
 
+const DropdownMenuCheckboxItem = React.forwardRef<
+	React.ElementRef<typeof DropdownMenuPrimitive.CheckboxItem>,
+	React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.CheckboxItem>
+>(({ className, children, checked, ...props }, ref) => (
+	<DropdownMenuPrimitive.CheckboxItem
+		ref={ref}
+		checked={checked}
+		className={cn(
+			"focus:bg-accent focus:text-accent-foreground relative flex cursor-default items-center gap-2 rounded-[var(--radius-control)] py-1.5 pr-2 pl-7 text-xs transition-colors outline-none select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+			className,
+		)}
+		{...props}
+	>
+		<span className="absolute left-2 flex size-3.5 items-center justify-center">
+			<DropdownMenuPrimitive.ItemIndicator>
+				<span className="text-brand text-[11px] leading-none">✓</span>
+			</DropdownMenuPrimitive.ItemIndicator>
+		</span>
+		{children}
+	</DropdownMenuPrimitive.CheckboxItem>
+));
+DropdownMenuCheckboxItem.displayName =
+	DropdownMenuPrimitive.CheckboxItem.displayName;
+
 export {
 	DropdownMenu,
 	DropdownMenuTrigger,
@@ -85,4 +109,5 @@ export {
 	DropdownMenuLabel,
 	DropdownMenuSeparator,
 	DropdownMenuShortcut,
+	DropdownMenuCheckboxItem,
 };

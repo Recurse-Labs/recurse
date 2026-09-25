@@ -110,6 +110,26 @@
 	min-height: var(--chrome-h);
 }
 
+.ui-header-actions {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	min-height: var(--control-h);
+	padding: 2px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-control);
+	background: color-mix(in srgb, var(--foreground) 2%, transparent);
+}
+
+.ui-header-actions > button {
+	border: 0;
+	border-radius: 2px;
+}
+
+.ui-header-actions .ui-sep {
+	margin-inline: 2px;
+}
+
 .ui-sep {
 	width: 1px;
 	height: 1rem;

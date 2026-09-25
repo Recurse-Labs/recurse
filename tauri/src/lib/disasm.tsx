@@ -21,6 +21,22 @@ export function splitComment(text: string): {
 	return { instr: text.slice(0, i), comment: text.slice(i + 3) };
 }
 
+/**
+ * Format a compact instruction byte string as separated hexadecimal pairs.
+ *
+ * ```
+ * formatInstructionBytes("48b801000000")
+ * // => "48 b8 01 00 00 00"
+ * ```
+ */
+export function formatInstructionBytes(
+	bytes: string | null | undefined,
+): string {
+	const compact = (bytes ?? "").replace(/\s+/g, "");
+	if (!compact) return "";
+	return (compact.match(/.{1,2}/g) ?? []).join(" ");
+}
+
 /** Token kinds the highlighter distinguishes. */
 export type TokenKind = "mnemonic" | "register" | "number" | "plain";
 
