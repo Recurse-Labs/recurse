@@ -12,7 +12,8 @@
 //! all metadata, model info and memories live in this DB.
 
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Mutex;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use rusqlite::Connection;
 
@@ -61,6 +62,18 @@ CREATE TABLE IF NOT EXISTS provider_credentials (
 );
 ";
 
+/// Serialises the one-time schema/journal setup between threads.
+///
+/// Only the setup is serialised: each caller still gets its own independent
+/// [`Connection`] and runs its own queries unserialised afterwards.
+static SETUP_LOCK: Mutex<()> = Mutex::new(());
+
+/// How long to keep retrying the WAL switch, and how long to wait between
+/// attempts. Only ever spent when another *process* holds the database, since
+/// in-process attempts are serialised by [`SETUP_LOCK`].
+const WAL_RETRY_BUDGET: Duration = Duration::from_secs(2);
+const WAL_RETRY_DELAY: Duration = Duration::from_millis(20);
+
 pub fn now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -93,6 +106,40 @@ pub fn db_path() -> Result<PathBuf, String> {
     Ok(home.join(".recurse").join("recurse.db"))
 }
 
+/// Switch the database to WAL, unless it already is.
+///
+/// Changing journal mode requires an **exclusive** lock on the database, and
+/// SQLite does not run the busy handler for it — so `busy_timeout` set on the
+/// connection does not make this safe to attempt concurrently. Two threads
+/// racing here fail with `SQLITE_BUSY` ("database is locked") roughly one run in
+/// three, which is exactly the flake this replaced.
+///
+/// Two things make it safe. The journal mode is persistent in the database
+/// header, so after the first successful switch every later connect observes WAL
+/// and skips the exclusive-lock operation entirely; and the attempt is made
+/// under [`SETUP_LOCK`], so only one thread in this process ever tries. The
+/// retry loop covers the remaining case, another *process* holding the file.
+fn ensure_wal(conn: &Connection) -> Result<(), String> {
+    let current: String = conn
+        .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+        .map_err(|e| format!("read journal mode: {e}"))?;
+    if current.eq_ignore_ascii_case("wal") {
+        return Ok(());
+    }
+    let deadline = Instant::now() + WAL_RETRY_BUDGET;
+    loop {
+        match conn.execute_batch("PRAGMA journal_mode=WAL;") {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                if Instant::now() >= deadline {
+                    return Err(format!("db pragmas: {e}"));
+                }
+                std::thread::sleep(WAL_RETRY_DELAY);
+            }
+        }
+    }
+}
+
 /// Open the DB, creating parent dirs and running all migrations
 /// (host tables + recurse_agent memory tables). Safe to call on every access.
 pub fn connect() -> Result<Connection, String> {
@@ -103,7 +150,11 @@ pub fn connect() -> Result<Connection, String> {
     let conn = Connection::open(&path).map_err(|e| format!("open db: {e}"))?;
     conn.busy_timeout(std::time::Duration::from_secs(5))
         .map_err(|e| format!("db busy timeout: {e}"))?;
-    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
+    let _setup = SETUP_LOCK
+        .lock()
+        .map_err(|_| "db setup lock poisoned".to_string())?;
+    ensure_wal(&conn)?;
+    conn.execute_batch("PRAGMA foreign_keys=ON;")
         .map_err(|e| format!("db pragmas: {e}"))?;
     conn.execute_batch(SCHEMA_SQL)
         .map_err(|e| format!("db schema: {e}"))?;
@@ -149,5 +200,123 @@ pub fn cleanup_legacy_filesystem() {
         let _ = std::fs::remove_dir_all(path.join("sessions"));
         let _ = std::fs::remove_dir_all(path.join("memory"));
         let _ = std::fs::remove_dir_all(path.join("history"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use super::*;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    /// The invariant that actually makes concurrent connects safe: the schema
+    /// and journal setup runs under [`SETUP_LOCK`], so the exclusive-lock
+    /// journal switch is attempted by one thread at a time.
+    ///
+    /// Proved without relying on timing: hold the lock, and `connect()` from
+    /// another thread must not get past it. A timing-based "N threads, no
+    /// failures" test cannot establish this — it passes against the broken code
+    /// whenever the threads happen not to collide, which is most of the time.
+    #[test]
+    fn connect_waits_for_the_setup_lock() {
+        crate::testhome::with_test_home(|_| {
+            let held = SETUP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+            let finished = std::sync::Arc::new(AtomicBool::new(false));
+            let flag = std::sync::Arc::clone(&finished);
+            let handle = std::thread::spawn(move || {
+                let _ = connect();
+                flag.store(true, Ordering::SeqCst);
+            });
+
+            // The spawned connect() is blocked on the lock we still hold.
+            std::thread::sleep(Duration::from_millis(150));
+            assert!(
+                !finished.load(Ordering::SeqCst),
+                "connect() must not run setup while another caller holds the lock"
+            );
+
+            drop(held);
+            handle.join().unwrap();
+            assert!(
+                finished.load(Ordering::SeqCst),
+                "connect() must complete once the lock is released"
+            );
+        });
+    }
+
+    /// Concurrent connects must all succeed. A smoke test rather than the
+    /// primary guard: the original race only reproduced on a fresh database
+    /// with unlucky timing, so this alone passes against the broken code.
+    /// `connect_waits_for_the_setup_lock` is what pins the fix.
+    #[test]
+    fn concurrent_connects_all_succeed() {
+        crate::testhome::with_test_home(|_| {
+            const ROUNDS: usize = 8;
+            const THREADS: usize = 8;
+            let failures = std::sync::Arc::new(AtomicUsize::new(0));
+            let db = db_path().unwrap();
+            for _ in 0..ROUNDS {
+                // A fresh, non-WAL database, so the journal switch is really
+                // attempted rather than skipped.
+                for suffix in ["", "-wal", "-shm"] {
+                    let _ = std::fs::remove_file(format!("{}{suffix}", db.display()));
+                }
+                let barrier = std::sync::Arc::new(std::sync::Barrier::new(THREADS));
+                let mut handles = Vec::new();
+                for _ in 0..THREADS {
+                    let failures = std::sync::Arc::clone(&failures);
+                    let barrier = std::sync::Arc::clone(&barrier);
+                    handles.push(std::thread::spawn(move || {
+                        barrier.wait();
+                        for _ in 0..5 {
+                            if connect().is_err() {
+                                failures.fetch_add(1, Ordering::SeqCst);
+                            }
+                        }
+                    }));
+                }
+                for h in handles {
+                    h.join().unwrap();
+                }
+            }
+            assert_eq!(
+                failures.load(Ordering::SeqCst),
+                0,
+                "every concurrent connect on a fresh database must succeed"
+            );
+        });
+    }
+
+    /// The journal mode is persistent, so the exclusive-lock switch is a
+    /// one-time cost, and asking for it again on a WAL database is harmless.
+    #[test]
+    fn journal_mode_is_wal_and_idempotent() {
+        crate::testhome::with_test_home(|_| {
+            connect().unwrap();
+            let conn = connect().unwrap();
+            let mode: String = conn
+                .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(mode.to_ascii_lowercase(), "wal");
+            ensure_wal(&conn).unwrap();
+        });
+    }
+
+    #[test]
+    fn connect_creates_the_schema() {
+        crate::testhome::with_test_home(|_| {
+            let conn = connect().unwrap();
+            for table in ["config", "projects", "sessions", "models"] {
+                let found: i64 = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                        [table],
+                        |row| row.get(0),
+                    )
+                    .unwrap();
+                assert_eq!(found, 1, "missing table {table}");
+            }
+        });
     }
 }
