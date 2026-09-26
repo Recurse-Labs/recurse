@@ -368,13 +368,34 @@ impl NativeEngine {
 
         let mut functions: BTreeMap<u64, FunctionInfo> = BTreeMap::new();
         // Named seeds first: they carry the real symbol names.
-        for sym in file.symbols().chain(file.dynamic_symbols()) {
-            if sym.kind() != SymbolKind::Text || sym.address() == 0 || !sym.is_definition() {
+        let mut untyped: Vec<(u64, String)> = Vec::new();
+        for (addr, kind, name) in symbol_seeds(&file) {
+            match kind {
+                SymbolSeedKind::Func => add_function(&mut functions, &file, addr, name),
+                SymbolSeedKind::Untyped => untyped.push((addr, name)),
+            }
+        }
+        // An assembly label can point into the middle of a function, so an
+        // untyped seed only becomes a function where no exact boundary already
+        // claims the address. Every function that can unwind has an exact
+        // `.eh_frame` / `.pdata` range, so an address strictly inside one of
+        // those is a label inside a known function, not a function we missed.
+        let exact_ranges: Vec<(u64, u64)> = if untyped.is_empty() {
+            Vec::new()
+        } else {
+            eh_frame_functions(&file)
+                .into_iter()
+                .chain(pdata_functions(&file))
+                .collect()
+        };
+        for (addr, name) in untyped {
+            if exact_ranges
+                .iter()
+                .any(|(start, len)| addr > *start && addr < start.saturating_add(*len))
+            {
                 continue;
             }
-            if let Ok(name) = sym.name() {
-                add_function(&mut functions, &file, sym.address(), shorten_name(name));
-            }
+            add_function(&mut functions, &file, addr, name);
         }
         let entry = code_addr(&file, file.entry());
         let mut entry_main = None;
@@ -1096,6 +1117,114 @@ fn plt_name_at(
     }
     let ops = decode_with(cs, &data[off..], addr, 1, false, false);
     plt_import_name(&ops, got)
+}
+
+/// How much a symbol's type can be trusted to start a function.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SymbolSeedKind {
+    /// `STT_FUNC`: the symbol is a function and its address starts one.
+    Func,
+    /// `STT_NOTYPE` in executable code: an assembly or linker label. Usually a
+    /// function, but it can be a local label inside one, so the caller checks it
+    /// against the exact function boundaries before placing it.
+    Untyped,
+}
+
+/// Classify one symbol as a function seed, or reject it.
+///
+/// `object` reports `STT_FUNC` as [`SymbolKind::Text`] and `STT_NOTYPE` as
+/// [`SymbolKind::Unknown`], and it defines `is_definition()` for `STT_NOTYPE` as
+/// `st_size != 0` — a test no assembler- or linker-defined label passes, because
+/// such labels carry no size. Requiring both a [`SymbolKind::Text`] symbol and a
+/// definition therefore drops `_start` and `_exit` from a hand-written
+/// `.symtab` binary that omits `.type name, @function`, leaving a single merged
+/// `entry0` function where `gdb`, `objdump` and `nm` all report two. Requiring
+/// `is_definition()` alone would additionally drop `STT_NOTYPE` labels that do
+/// carry a size.
+///
+/// So an untyped symbol is admitted too, but only when it lands in an executable
+/// section. That is what keeps the `_edata` / `__bss_start` / `_end` boundary
+/// labels a linker emits past the end of the text out: they are not code, which
+/// is correct, since they are data boundaries. Data and TLS symbols are never
+/// code and are never admitted.
+///
+/// ```
+/// use recurse_static::native::{symbol_seed_kind, SymbolSeedKind};
+/// use object::SymbolKind;
+///
+/// // STT_FUNC: authoritative, and `object` already validated the definition.
+/// assert_eq!(
+///     symbol_seed_kind(SymbolKind::Text, true, true),
+///     Some(SymbolSeedKind::Func),
+/// );
+/// // STT_FUNC that `object` does not call a definition (a forward reference).
+/// assert_eq!(symbol_seed_kind(SymbolKind::Text, true, false), None);
+/// // STT_NOTYPE in .text with no size: a hand-written assembly label.
+/// assert_eq!(
+///     symbol_seed_kind(SymbolKind::Unknown, true, false),
+///     Some(SymbolSeedKind::Untyped),
+/// );
+/// // STT_NOTYPE outside .text: a linker boundary label such as `_end`.
+/// assert_eq!(symbol_seed_kind(SymbolKind::Unknown, false, false), None);
+/// // Data, TLS, section and file symbols are never code.
+/// assert_eq!(symbol_seed_kind(SymbolKind::Data, true, true), None);
+/// assert_eq!(symbol_seed_kind(SymbolKind::Tls, true, true), None);
+/// ```
+pub fn symbol_seed_kind(
+    kind: SymbolKind,
+    in_executable_section: bool,
+    is_definition: bool,
+) -> Option<SymbolSeedKind> {
+    match kind {
+        SymbolKind::Text if is_definition => Some(SymbolSeedKind::Func),
+        SymbolKind::Unknown if in_executable_section => Some(SymbolSeedKind::Untyped),
+        _ => None,
+    }
+}
+
+/// Every symbol that may start a function, classified and named, in the order
+/// the symbol table yields them. A label with no name contributes no function.
+///
+/// Hand-written assembly is the case that matters: it omits
+/// `.type name, @function`, so every label arrives as `STT_NOTYPE` with no size,
+/// which `object` reports as [`SymbolKind::Unknown`] and not a definition. Both
+/// labels are recovered here, while the `_edata` / `__bss_start` / `_end`
+/// boundary labels the linker places past the text are not, because they are not
+/// in an executable section.
+///
+/// ```
+/// use recurse_static::native::{symbol_seeds, SymbolSeedKind};
+///
+/// // `as --32` + `ld -m elf_i386` on two `.globl` labels with no `.type`.
+/// let bytes: &[u8] = include_bytes!("../tests/fixtures/notype_labels_i386.elf");
+/// let file = object::File::parse(bytes).unwrap();
+/// let seeds = symbol_seeds(&file);
+///
+/// let named: Vec<_> = seeds
+///     .iter()
+///     .map(|(addr, kind, name)| (*addr, *kind, name.as_str()))
+///     .collect();
+/// assert_eq!(named, vec![
+///     (0x0804_9000, SymbolSeedKind::Untyped, "_start"),
+///     (0x0804_9018, SymbolSeedKind::Untyped, "_exit"),
+/// ]);
+/// ```
+pub fn symbol_seeds(file: &object::File<'_>) -> Vec<(u64, SymbolSeedKind, String)> {
+    file.symbols()
+        .chain(file.dynamic_symbols())
+        .filter_map(|sym| {
+            if sym.address() == 0 {
+                return None;
+            }
+            let kind = symbol_seed_kind(
+                sym.kind(),
+                NativeEngine::in_text(file, sym.address()),
+                sym.is_definition(),
+            )?;
+            let name = shorten_name(sym.name().ok()?);
+            (!name.is_empty()).then(|| (code_addr(file, sym.address()), kind, name))
+        })
+        .collect()
 }
 
 /// Add `addr` (mapping a name) to the function map, skipping non-code.
@@ -3290,5 +3419,83 @@ mod tests {
     #[test]
     fn demangle_falls_back_to_input() {
         assert_eq!(demangle("plain_name"), "plain_name");
+    }
+
+    /// `STT_NOTYPE` assembly labels are real function starts, so a binary whose
+    /// `.symtab` omits `.type name, @function` must report one function per
+    /// label, at the label's own address and size — matching what `gdb`,
+    /// `objdump` and `nm` report. Gating discovery on `SymbolKind::Text` merged
+    /// them into a single `entry0` spanning both.
+    #[test]
+    fn notype_assembly_labels_become_separate_functions() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!(
+            "recurse-notype-labels-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(
+            &path,
+            include_bytes!("../tests/fixtures/notype_labels_i386.elf").as_slice(),
+        )
+        .expect("write fixture");
+
+        let engine = NativeEngine::open(&path).expect("open fixture");
+        let functions = engine.functions().expect("functions");
+        let found: Vec<(u64, String, Option<u64>)> = functions
+            .iter()
+            .map(|f| (f.addr, f.name.clone(), f.size))
+            .collect();
+        assert_eq!(
+            found,
+            vec![
+                (0x0804_9000, "_start".to_string(), Some(24)),
+                (0x0804_9018, "_exit".to_string(), Some(6)),
+            ],
+            "each STT_NOTYPE label must be its own function, sized to the next label"
+        );
+
+        // `_exit` is reachable only through `push $_exit`, never a `call`, so the
+        // linear sweep cannot find it — the symbol is the only source.
+        let exit = engine
+            .function_disasm(0x0804_9018)
+            .expect("disassemble _exit");
+        assert_eq!(exit.name, "_exit");
+        assert_eq!(
+            exit.ops.iter().map(|op| op.addr).collect::<Vec<_>>(),
+            vec![0x0804_9018, 0x0804_9019, 0x0804_901b, 0x0804_901c],
+            "_exit must disassemble to its own four instructions"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The linker boundary labels a `.symtab` carries past the end of the text
+    /// (`_end`, `_edata`, `__bss_start`) are data boundaries, not code, so they
+    /// must not become functions even though they are `STT_NOTYPE`.
+    #[test]
+    fn linker_boundary_labels_are_not_functions() {
+        let bytes: &[u8] = include_bytes!("../tests/fixtures/notype_labels_i386.elf");
+        let file = object::File::parse(bytes).expect("parse fixture");
+        let boundary = [0x0804_b028u64];
+        for addr in boundary {
+            let is_text = NativeEngine::in_text(&file, addr);
+            let sym = file
+                .symbols()
+                .find(|s| s.address() == addr)
+                .expect("fixture carries a boundary label at this address");
+            assert!(
+                !is_text,
+                "fixture precondition: the boundary label is outside every text section"
+            );
+            assert_eq!(
+                symbol_seed_kind(sym.kind(), is_text, sym.is_definition()),
+                None,
+                "a boundary label outside .text must not be admitted as a function seed"
+            );
+        }
     }
 }
