@@ -6,6 +6,10 @@ export const chrome = {
 	seg: "ui-seg",
 	press: "ui-press",
 	selected: "ui-selected",
+	/** Draggable value input. */
+	slider: "ui-slider",
+	/** Debugger: an instruction the program counter has already passed. */
+	executed: "ui-executed",
 	composer: "ui-composer",
 	menuLabel: "ui-menu-label",
 	kbd: "ui-kbd",

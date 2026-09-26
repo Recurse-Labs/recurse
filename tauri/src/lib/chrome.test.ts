@@ -15,6 +15,7 @@ describe("chrome tokens", () => {
 	it("defines the shared control tokens", () => {
 		for (const token of [
 			"--selection",
+			"--executed",
 			"--control-h",
 			"--chrome-h",
 			"--radius-control",
@@ -26,5 +27,12 @@ describe("chrome tokens", () => {
 		]) {
 			expect(css).toContain(token);
 		}
+	});
+
+	it("defines the executed highlight for both themes", () => {
+		const root = css.slice(0, css.indexOf(".dark"));
+		const dark = css.slice(css.indexOf(".dark"));
+		expect(root).toContain("--executed:");
+		expect(dark).toContain("--executed:");
 	});
 });

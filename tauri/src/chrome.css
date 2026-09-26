@@ -3,6 +3,7 @@
  * selection fills. Class names are also exported from src/lib/chrome.ts.
  *
  * --selection          quiet selected/pressed fill (not an inverted slab)
+ * --executed           debugger fill for an instruction the program has passed
  * --control-h          toolbar control height
  * --chrome-h           bar / tab-strip height
  * --radius-control     shared corner radius
@@ -14,6 +15,11 @@
 :root {
 	--selection: rgba(0, 122, 204, 0.14);
 	--selection-foreground: #0b0d12;
+	/* "Already run past" in the debugger: a green the selection blue cannot be
+	 * mistaken for, with a stronger edge for the leading rule. */
+	--executed: rgba(20, 124, 92, 0.12);
+	--executed-edge: rgba(20, 124, 92, 0.55);
+	--executed-foreground: #4a6a60;
 	--warning: #9a6a00;
 	--warning-foreground: #6b4a00;
 	--kbd: #6b7280;
@@ -45,6 +51,9 @@
 .dark {
 	--selection: rgba(126, 200, 255, 0.14);
 	--selection-foreground: #e9edf3;
+	--executed: rgba(74, 190, 148, 0.11);
+	--executed-edge: rgba(74, 190, 148, 0.5);
+	--executed-foreground: #7fb9a3;
 	--warning: #e5c07b;
 	--warning-foreground: #e5c07b;
 	--kbd: #69727f;
@@ -65,6 +74,9 @@
 @theme inline {
 	--color-selection: var(--selection);
 	--color-selection-foreground: var(--selection-foreground);
+	--color-executed: var(--executed);
+	--color-executed-edge: var(--executed-edge);
+	--color-executed-foreground: var(--executed-foreground);
 	--color-warning: var(--warning);
 	--color-warning-foreground: var(--warning-foreground);
 	--color-kbd: var(--kbd);
@@ -178,6 +190,101 @@
 .ui-selected {
 	background: var(--selection);
 	color: var(--selection-foreground);
+}
+
+/*
+ * Debugger: an instruction the program counter has already been observed at.
+ * Deliberately a different hue from `.ui-selected` (which marks the one about
+ * to run) and a leading rule rather than a cursor glyph alone, so a run of
+ * passed instructions reads as a block of history at a glance.
+ */
+.ui-executed {
+	background: var(--executed);
+	box-shadow: inset 2px 0 0 var(--executed-edge);
+	color: var(--executed-foreground);
+}
+
+/* The current row wins over the executed fill, so the two never stack. */
+.ui-selected.ui-executed,
+.ui-executed.ui-selected {
+	background: var(--selection);
+	color: var(--selection-foreground);
+	box-shadow: inset 2px 0 0 var(--brand);
+}
+
+/*
+ * Draggable value input. A native range control, so dragging, arrow keys, Home
+ * and End all work without reimplementing them. `--ui-slider-fill` is the
+ * fraction of the track already travelled, set inline by the caller, which is
+ * what paints the filled part of the groove.
+ */
+.ui-slider {
+	-webkit-appearance: none;
+	appearance: none;
+	width: 100%;
+	height: var(--control-h);
+	background: transparent;
+	cursor: ew-resize;
+}
+
+.ui-slider:focus {
+	outline: none;
+}
+
+.ui-slider::-webkit-slider-runnable-track {
+	height: 0.25rem;
+	border-radius: 999px;
+	background: linear-gradient(
+		to right,
+		var(--brand) 0 var(--ui-slider-fill, 0%),
+		var(--muted) var(--ui-slider-fill, 0%) 100%
+	);
+}
+
+.ui-slider::-webkit-slider-thumb {
+	-webkit-appearance: none;
+	appearance: none;
+	width: 0.75rem;
+	height: 0.75rem;
+	margin-top: -0.25rem;
+	border: 2px solid var(--background);
+	border-radius: 999px;
+	background: var(--brand);
+}
+
+.ui-slider::-moz-range-track {
+	height: 0.25rem;
+	border-radius: 999px;
+	background: linear-gradient(
+		to right,
+		var(--brand) 0 var(--ui-slider-fill, 0%),
+		var(--muted) var(--ui-slider-fill, 0%) 100%
+	);
+}
+
+.ui-slider::-moz-range-thumb {
+	width: 0.75rem;
+	height: 0.75rem;
+	border: 2px solid var(--background);
+	border-radius: 999px;
+	background: var(--brand);
+}
+
+.ui-slider:focus-visible::-webkit-slider-thumb {
+	box-shadow:
+		0 0 0 2px var(--background),
+		0 0 0 4px var(--brand);
+}
+
+.ui-slider:focus-visible::-moz-range-thumb {
+	box-shadow:
+		0 0 0 2px var(--background),
+		0 0 0 4px var(--brand);
+}
+
+.ui-slider:disabled {
+	cursor: default;
+	opacity: 0.5;
 }
 
 .ui-composer {
