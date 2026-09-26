@@ -1,8 +1,9 @@
-import { useEffect } from "react";
-import { Moon, Sun } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ChevronRight, Moon, Sun } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { DebuggerSettingsDialog } from "@/components/DebuggerSettingsDialog";
 import { LogoMark } from "@/components/Logo";
 import {
 	DropdownMenu,
@@ -36,6 +37,7 @@ export function Header() {
 	const initBackend = useSettingsStore((s) => s.initBackend);
 	const theme = useSettingsStore((s) => s.theme);
 	const toggleTheme = useSettingsStore((s) => s.toggleTheme);
+	const [debuggerOpen, setDebuggerOpen] = useState(false);
 
 	useEffect(() => {
 		void initBackend();
@@ -157,9 +159,26 @@ export function Header() {
 								Hex-Rays
 							</span>
 						</DropdownMenuItem>
+						<DropdownMenuSeparator />
+						<DropdownMenuItem
+							// Opened on the next tick, not inline: the menu restores
+							// focus to this trigger as it closes, which would
+							// immediately yank focus back out of the new dialog.
+							onSelect={() =>
+								setTimeout(() => setDebuggerOpen(true), 0)
+							}
+							className="justify-between"
+						>
+							Debugger
+							<ChevronRight className="opacity-60" />
+						</DropdownMenuItem>
 					</DropdownMenuContent>
 				</DropdownMenu>
 			</div>
+			<DebuggerSettingsDialog
+				open={debuggerOpen}
+				onOpenChange={setDebuggerOpen}
+			/>
 		</header>
 	);
 }

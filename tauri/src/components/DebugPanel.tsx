@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { useAnalysisStore } from "@/store/analysisStore";
-import { useDebugStore } from "@/store/debugStore";
+import { isLiveState, useDebugStore } from "@/store/debugStore";
 import type { DebugStopReason, DebugTraceEntry } from "@/types";
 
 function fmtAddr(a?: number | null): string {
@@ -168,7 +168,9 @@ function RegistersPane() {
 /** Right column, bottom: the words at the stack pointer, with value hints. */
 function StackPane() {
 	const sp = useDebugStore((s) => s.registers?.sp ?? null);
-	const active = useDebugStore((s) => s.active);
+	// Reading the debuggee's memory needs a live process; a finished session has
+	// no stack left to read.
+	const live = isLiveState(useDebugStore((s) => s.state));
 	const bias = useDebugStore((s) => s.bias);
 	const funcs = useAnalysisStore((s) => s.funcs);
 	const strings = useAnalysisStore((s) => s.strings);
@@ -177,7 +179,7 @@ function StackPane() {
 	);
 
 	useEffect(() => {
-		if (sp == null || !active) return;
+		if (sp == null || !live) return;
 		let cancelled = false;
 		api.debugCommand("read", { addr: sp, len: 256, format: "u64" })
 			.then((r) => {
@@ -192,7 +194,7 @@ function StackPane() {
 		return () => {
 			cancelled = true;
 		};
-	}, [sp, active]);
+	}, [sp, live]);
 
 	// Static address -> function name, for code pointers on the stack.
 	const codeMap = useMemo(() => {
@@ -271,7 +273,7 @@ function BottomTabs() {
 	const frames = useDebugStore((s) => s.frames);
 	const breakpoints = useDebugStore((s) => s.breakpoints);
 	const run = useDebugStore((s) => s.run);
-	const active = useDebugStore((s) => s.active);
+	const live = isLiveState(useDebugStore((s) => s.state));
 	const pid = useDebugStore((s) => s.pid);
 	const [tab, setTab] = useState<
 		"stack" | "breakpoints" | "threads" | "trace"
@@ -283,7 +285,7 @@ function BottomTabs() {
 	const [trace, setTrace] = useState<DebugTraceEntry[]>([]);
 
 	useEffect(() => {
-		if (tab !== "threads" || !active) return;
+		if (tab !== "threads" || !live) return;
 		let cancelled = false;
 		api.debugCommand("threads")
 			.then((t) => {
@@ -293,7 +295,7 @@ function BottomTabs() {
 		return () => {
 			cancelled = true;
 		};
-	}, [tab, active, pid]);
+	}, [tab, live, pid]);
 
 	useEffect(() => {
 		if (tab !== "trace") return;
@@ -439,6 +441,8 @@ export function DebugPanel() {
 	const active = useDebugStore((s) => s.active);
 	const pid = useDebugStore((s) => s.pid);
 	const state = useDebugStore((s) => s.state);
+	// Run/Step/Break need a live debuggee; `active` only means a session exists.
+	const live = isLiveState(state);
 	const stop = useDebugStore((s) => s.stop);
 	const output = useDebugStore((s) => s.output);
 	const busy = useDebugStore((s) => s.busy);
@@ -528,9 +532,9 @@ export function DebugPanel() {
 				<Button
 					variant="toolbar"
 					size="sm"
-					className={active && !busy ? "ui-selected" : undefined}
+					className={live && !busy ? "ui-selected" : undefined}
 					onClick={() => void run("continue")}
-					disabled={busy || !active}
+					disabled={busy || !live}
 					title="Run (continue)"
 				>
 					Run
@@ -539,7 +543,7 @@ export function DebugPanel() {
 					variant="toolbar"
 					size="sm"
 					onClick={() => void run("interrupt")}
-					disabled={!active}
+					disabled={!live}
 					title="Pause the running target"
 				>
 					Pause
@@ -548,7 +552,7 @@ export function DebugPanel() {
 					variant="toolbar"
 					size="sm"
 					onClick={() => void run("step", { kind: "into" })}
-					disabled={busy || !active}
+					disabled={busy || !live}
 					title="Step into"
 				>
 					Into
@@ -557,7 +561,7 @@ export function DebugPanel() {
 					variant="toolbar"
 					size="sm"
 					onClick={() => void run("step", { kind: "over" })}
-					disabled={busy || !active}
+					disabled={busy || !live}
 					title="Step over"
 				>
 					Over
@@ -566,7 +570,7 @@ export function DebugPanel() {
 					variant="toolbar"
 					size="sm"
 					onClick={() => void run("step", { kind: "out" })}
-					disabled={busy || !active}
+					disabled={busy || !live}
 					title="Step out"
 				>
 					Out
@@ -585,7 +589,7 @@ export function DebugPanel() {
 					variant="toolbar"
 					size="sm"
 					onClick={onBreak}
-					disabled={busy || !active || !breakAt.trim()}
+					disabled={busy || !live || !breakAt.trim()}
 				>
 					Break
 				</Button>
@@ -594,7 +598,7 @@ export function DebugPanel() {
 					variant="toolbar"
 					size="sm"
 					onClick={() => void run("detach")}
-					disabled={busy || !active}
+					disabled={busy || !live}
 				>
 					Detach
 				</Button>
@@ -603,7 +607,7 @@ export function DebugPanel() {
 					size="sm"
 					className="text-destructive hover:bg-destructive/10 hover:text-destructive"
 					onClick={() => void run("kill")}
-					disabled={busy || !active}
+					disabled={busy || !live}
 				>
 					Kill
 				</Button>
@@ -668,9 +672,22 @@ export function DebugPanel() {
 				</div>
 				<div ref={outputRef} className="scroll-host h-24 overflow-auto">
 					<pre className="text-2xs p-2 font-mono whitespace-pre-wrap">
-						{output.replace(/\r/g, "")}
+						{/* Chunks, so the analyst's own input reads differently from what
+					    the debuggee printed. Index keys: the transcript only appends
+					    and trims from the front, and the children are plain text. */}
+						{output.map((chunk, i) => (
+							<span
+								key={i}
+								className={
+									chunk.echo ? "text-brand" : undefined
+								}
+							>
+								{chunk.text}
+							</span>
+						))}
 					</pre>
 				</div>
+
 				<div className="flex items-center gap-1.5 border-t px-2 py-1.5">
 					<Input
 						value={stdin}
@@ -680,13 +697,13 @@ export function DebugPanel() {
 						}}
 						placeholder="type input for the target — Enter sends"
 						className="h-7 flex-1 text-xs"
-						disabled={!active}
+						disabled={!live}
 					/>
 					<Button
 						variant="toolbar"
 						size="sm"
 						onClick={onSendStdin}
-						disabled={!active || !stdin.trim()}
+						disabled={!live || !stdin.trim()}
 					>
 						Send
 					</Button>
