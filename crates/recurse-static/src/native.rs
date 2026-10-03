@@ -3268,6 +3268,7 @@ impl Engine for NativeEngine {
                     text: None,
                     label: Some(section.title.clone()),
                     jump: None,
+                    target_index: None,
                     op: None,
                 }),
                 0 => {
@@ -3286,6 +3287,7 @@ impl Engine for NativeEngine {
                             text: Some(op.disasm),
                             label: None,
                             jump: op.jump,
+                            target_index: op.jump.and_then(|t| self.listing_locate(t).ok()),
                             op: op.kind,
                         }),
                         None => rows.push(ListingRow {
@@ -3296,6 +3298,7 @@ impl Engine for NativeEngine {
                             text: Some("(invalid instruction)".to_string()),
                             label: None,
                             jump: None,
+                            target_index: None,
                             op: None,
                         }),
                     }
@@ -3320,6 +3323,7 @@ impl Engine for NativeEngine {
                         text: Some(ascii),
                         label: None,
                         jump: None,
+                        target_index: None,
                         op: None,
                     });
                 }
@@ -4331,7 +4335,10 @@ mod tests {
         let exe = std::env::current_exe().expect("current test binary");
         let engine = NativeEngine::open(&exe).expect("open test binary");
         let total = engine.listing_len().expect("listing len");
-        assert!(total > 100, "the image should list into many rows, got {total}");
+        assert!(
+            total > 100,
+            "the image should list into many rows, got {total}"
+        );
 
         let first = engine.listing_window(0, 64).expect("listing window");
         assert_eq!(first.total, total);
@@ -4382,6 +4389,52 @@ mod tests {
         assert!(row.addr <= func_addr);
     }
 
+    #[test]
+    fn listing_rows_carry_the_row_index_of_their_branch_target() {
+        let exe = std::env::current_exe().expect("current test binary");
+        let engine = NativeEngine::open(&exe).expect("open test binary");
+        let total = engine.listing_len().expect("listing len");
+
+        // Walk the listing for a branch whose target is inside the image, so the
+        // target's row index can be checked against the row itself.
+        let mut checked = 0usize;
+        let mut offset = 0u64;
+        while offset < total && checked < 64 {
+            let window = engine.listing_window(offset, 512).expect("listing window");
+            if window.rows.is_empty() {
+                break;
+            }
+            for row in &window.rows {
+                let Some(target) = row.jump else { continue };
+                let Some(target_index) = row.target_index else {
+                    continue;
+                };
+                let reached = engine
+                    .listing_window(target_index, 1)
+                    .expect("target row")
+                    .rows
+                    .into_iter()
+                    .next()
+                    .expect("a target row");
+                assert_eq!(
+                    reached.addr, target,
+                    "target_index must point at the row holding the branch target"
+                );
+                assert!(target_index < total);
+                checked += 1;
+                if checked >= 64 {
+                    break;
+                }
+            }
+            offset += window.rows.len() as u64;
+        }
+        assert!(
+            checked > 0,
+            "a compiler-built image has branches, so some rows must carry a target index"
+        );
+    }
+
+    #[test]
     fn data_regions_report_real_data_sections() {
         let exe = std::env::current_exe().expect("current test binary");
         let engine = NativeEngine::open(&exe).expect("open test binary");

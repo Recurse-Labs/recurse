@@ -416,6 +416,9 @@ pub struct ListingRow {
     /// Direct branch/call destination, for code rows.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub jump: Option<u64>,
+    /// Listing row containing the direct branch/call destination.
+    #[serde(rename = "targetIndex", skip_serializing_if = "Option::is_none")]
+    pub target_index: Option<u64>,
     /// Instruction category (`call`, `jmp`, `ret`, `cjmp`, …), for code rows.
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     pub op: Option<String>,

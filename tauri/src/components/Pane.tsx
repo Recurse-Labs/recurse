@@ -31,8 +31,14 @@ export function Pane({
 	bodyClassName?: string;
 	scroll?: boolean;
 }) {
+	// `h-full`: a pane dropped into a sized frame (a `StackSplit` stack) must
+	// fill it so the body's `flex-1` has a bound and its list can scroll.
+	// Against an auto-height parent a percentage height resolves to auto, so
+	// this is inert anywhere the pane already sizes itself.
 	return (
-		<section className={cn("flex min-h-0 min-w-0 flex-col", className)}>
+		<section
+			className={cn("flex h-full min-h-0 min-w-0 flex-col", className)}
+		>
 			{title !== undefined && (
 				<header className="border-border flex h-[var(--chrome-h)] shrink-0 items-center gap-2 border-b px-2.5">
 					<span className="label truncate">{title}</span>

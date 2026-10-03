@@ -175,6 +175,7 @@ export interface ListingRow {
 	text?: string | null;
 	label?: string | null;
 	jump?: number | null;
+	targetIndex?: number | null;
 	type?: string | null;
 }
 

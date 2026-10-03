@@ -607,3 +607,13 @@ body.dragging-suppress-select-row {
 	content-visibility: auto;
 	contain-intrinsic-size: auto var(--row-h);
 }
+
+/* The listing keeps its address and instruction legible in a narrow pane by
+   dropping the byte column — the least essential of the three — rather than
+   letting the address and bytes push the instruction off the edge. The
+   container is the disassembly wrapper (`@container` on it, in CenterPanel). */
+@container (max-width: 640px) {
+	.listing-bytes {
+		display: none;
+	}
+}

@@ -21,6 +21,7 @@ import { PanelErrorBoundary } from "@/components/PanelErrorBoundary";
 import { ReconPanel } from "@/components/ReconPanel";
 import { cn } from "@/lib/utils";
 import { ListingView } from "@/components/ListingView";
+import { FLOW_GUTTER_W } from "@/lib/flowGutter";
 import { MENU } from "@/lib/commands";
 import { disasmMenuSections } from "@/lib/disasmMenu";
 import { clearSections, publishSections } from "@/lib/menuRegistry";
@@ -752,12 +753,22 @@ export function CenterPanel() {
 												})}
 											</div>
 										)}
-									<div className="font-mono text-xs">
+									<div className="@container font-mono text-xs">
 										<div className="border-border bg-card text-2xs flex gap-3 border-b px-3 py-1 font-semibold tracking-wider uppercase">
-											<span className="text-asm-addr w-[19ch] shrink-0">
+											{/* Matches the row's flow gutter exactly. */}
+											<span
+												className="shrink-0"
+												style={{ width: FLOW_GUTTER_W }}
+											/>
+											<span className="text-asm-addr min-w-[11ch] shrink-0">
 												Address
 											</span>
-											<span className="text-asm-bytes w-[26ch] shrink-0 pr-3">
+											<span
+												className="listing-bytes text-asm-bytes shrink-0 pr-3"
+												style={{
+													width: "var(--listing-bytes-w, 26ch)",
+												}}
+											>
 												Bytes
 											</span>
 											<span className="text-muted-foreground">
