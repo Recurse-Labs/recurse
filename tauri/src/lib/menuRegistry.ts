@@ -51,6 +51,8 @@ export interface MenuCommand {
 	run: () => void;
 	/** Set for a command that shows a state rather than doing a thing. */
 	checked?: boolean;
+	/** Set while the action cannot be run, so the menu greys it out. */
+	disabled?: boolean;
 	/** The menu this command sits under. */
 	menu: string;
 	/** The heading it sits under inside that menu. */
@@ -144,6 +146,7 @@ export function sectionsFor(
 			...(command.checked === undefined
 				? {}
 				: { checked: command.checked }),
+			...(command.disabled ? { disabled: true } : {}),
 			run: command.run,
 		};
 		const last = sections[sections.length - 1];

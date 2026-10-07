@@ -6,6 +6,7 @@ import { useDebugStore } from "@/store/debugStore";
 import { useProjectStore } from "@/store/projectStore";
 import { useSettingsStore } from "@/store/settingsStore";
 import { useUiStore } from "@/store/uiStore";
+import { useUpdateStore } from "@/store/updateStore";
 import type { CenterTab, Function } from "@/types";
 
 /** One thing the app can be asked to do, wherever it is asked from. */
@@ -33,6 +34,8 @@ export interface Command {
 	 * can tick the one that is in force.
 	 */
 	checked?: boolean;
+	/** Set while the action cannot be run, so the menu greys it out. */
+	disabled?: boolean;
 	/** Which menu in the top bar this belongs under. */
 	menu: MenuName;
 	/** The heading it sits under inside that menu. */
@@ -104,6 +107,41 @@ export const TAB_LABEL: Record<CenterTab, string> = {
 	debug: "Debug",
 	console: "Console",
 };
+
+/**
+ * How the Settings menu words the updater, and whether it can be clicked.
+ *
+ * Read at the moment the menu or palette is built, not stored, so a check that
+ * finished while the menu was closed is what the next open shows.
+ */
+function updateCommand(): { title: string; disabled: boolean } {
+	const { status, availableVersion, progress } = useUpdateStore.getState();
+	switch (status) {
+		case "checking":
+			return { title: "Checking for updates…", disabled: true };
+		case "available":
+			return {
+				title: `Update to v${availableVersion} — restart to install`,
+				disabled: false,
+			};
+		case "downloading":
+			return {
+				title:
+					progress != null
+						? `Downloading update… ${progress}%`
+						: "Downloading update…",
+				disabled: true,
+			};
+		case "restarting":
+			return { title: "Restarting…", disabled: true };
+		case "up-to-date":
+			return { title: "You're up to date", disabled: false };
+		case "error":
+			return { title: "Update check failed — retry", disabled: false };
+		default:
+			return { title: "Check for updates", disabled: false };
+	}
+}
 
 /**
  * Every command the app offers, resolved from the stores at the moment it is
@@ -250,6 +288,30 @@ export function buildCommands(): Command[] {
 			run: () => void settings.setBackend(backend),
 		});
 	}
+
+	// The header that used to hold this is gone; Settings is where a reader
+	// looks for it now. The title is the live state, so opening the menu (or
+	// the palette) shows "Update to v…" rather than a check that already ran.
+	const update = updateCommand();
+	cmds.push({
+		id: "check-updates",
+		title: update.title,
+		menu: MENU.settings,
+		section: "Updates",
+		disabled: update.disabled,
+		run: () => {
+			const store = useUpdateStore.getState();
+			if (
+				store.status === "checking" ||
+				store.status === "downloading" ||
+				store.status === "restarting"
+			) {
+				return;
+			}
+			if (store.status === "available") void store.installAndRestart();
+			else void store.checkForUpdates();
+		},
+	});
 
 	if (dbg.active) {
 		cmds.push(

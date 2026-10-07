@@ -50,6 +50,7 @@ describe("the menus", () => {
 		const settings = itemsOf(MENU.settings);
 		expect(settings).toContain("model-picker");
 		expect(settings).toContain("debugger-settings");
+		expect(settings).toContain("check-updates");
 	});
 
 	it("do not file a setting under File as well", () => {

@@ -11,9 +11,10 @@ import {
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { WindowControls } from "@/components/WindowControls";
-import { buildCommands, MENU_ORDER, type MenuName } from "@/lib/commands";
+import { buildCommands, MENU, MENU_ORDER, type MenuName } from "@/lib/commands";
 import { chrome } from "@/lib/chrome";
 import { useProjectStore } from "@/store/projectStore";
+import { useUpdateStore } from "@/store/updateStore";
 import {
 	groupSections,
 	readSections,
@@ -109,6 +110,19 @@ function Menu({
 	/** A click, a key, or a dismissal asked for this menu to open or close. */
 	onOpen: (menu: MenuName | null) => void;
 }) {
+	// Primitive selectors only. A fresh object here fails React's getSnapshot
+	// cache check and re-renders forever. Non-Settings menus select null, so a
+	// download does not repaint the rest of the bar.
+	const updateStatus = useUpdateStore((s) =>
+		menu === MENU.settings ? s.status : null,
+	);
+	const updateProgress = useUpdateStore((s) =>
+		menu === MENU.settings ? s.progress : null,
+	);
+	const updateVersion = useUpdateStore((s) =>
+		menu === MENU.settings ? s.availableVersion : null,
+	);
+	const updateAvailable = updateStatus === "available";
 	return (
 		<DropdownMenu
 			// Not modal: a modal menu takes the pointer events away from the rest of
@@ -131,10 +145,25 @@ function Menu({
 				<button
 					type="button"
 					className={chrome.menuItem}
+					title={
+						updateAvailable
+							? `Update available: v${updateVersion}`
+							: updateStatus === "downloading"
+								? updateProgress != null
+									? `Downloading update… ${updateProgress}%`
+									: "Downloading update…"
+								: undefined
+					}
 					onPointerEnter={() => onHover(menu, true)}
 					onPointerLeave={() => onHover(menu, false)}
 				>
 					{menu}
+					{updateAvailable && (
+						<span
+							className="bg-primary inline-block h-1.5 w-1.5 rounded-full"
+							aria-label="Update available"
+						/>
+					)}
 				</button>
 			</DropdownMenuTrigger>
 			<DropdownMenuContent
