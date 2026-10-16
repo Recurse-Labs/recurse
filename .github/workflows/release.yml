@@ -1,0 +1,86 @@
+name: Release
+
+# Builds signed desktop bundles for macOS (arm64 + x64), Linux (.deb/.rpm/.AppImage),
+# and Windows (.msi/.exe), publishes them as a GitHub Release, and writes the
+# `latest.json` manifest the in-app updater polls (see docs/updating.md).
+#
+# Trigger: push a `vX.Y.Z` tag whose version matches
+# `tauri/src-tauri/tauri.conf.json`. `workflow_dispatch` allows a manual
+# re-run (e.g. to rebuild a platform) against an existing tag.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing vX.Y.Z tag to (re)build"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+          - platform: ubuntu-22.04
+            target: ""
+          - platform: windows-latest
+            target: ""
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Install Linux system dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential \
+            curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> ../target"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: tauri/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: tauri
+        run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Set once in repo settings (Settings -> Secrets and variables ->
+          # Actions) from `npx tauri signer generate`. See docs/releasing.md.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: tauri
+          tagName: ${{ inputs.tag || github.ref_name }}
+          releaseName: "Recurse ${{ inputs.tag || github.ref_name }}"
+          releaseBody: |
+            See the commit history for details. Existing installs update
+            automatically (Settings menu -> "Check for updates" or on next
+            launch).
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: true
+          args: ${{ matrix.target != '' && format('--target {0}', matrix.target) || '' }}
