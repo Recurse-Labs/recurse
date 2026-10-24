@@ -1,5 +1,7 @@
 # Recurse
 
+[![Featured on Made with REA](https://madewithrea.com/badges/featured.svg)](https://madewithrea.com/builds/recurse-agentic-reverse-engineering-ide-with-native-engine-and-mcp-ser)
+
 Agentic reverse engineering environment — a Ghidra-class desktop app in the spirit of
 "Cursor for reverse engineering". Built with **Tauri 2** (React + TypeScript frontend) on top
 of a **pluggable analysis backend**. The default is a **pure-Rust native engine** — no
