@@ -4,7 +4,10 @@ import type { RefObject } from "react";
 
 import { api } from "@/api";
 import { clearHeaderInfoCache } from "@/components/FunctionHeader";
-import { ListingRowView } from "@/components/ListingRow";
+import { ListingContextMenu } from "@/components/ListingContextMenu";
+import { ListingRowSlot } from "@/components/ListingRow";
+import type { BuiltContext, Selection } from "@/lib/listingSelection";
+import { useListingSelection } from "@/lib/useListingSelection";
 import { useAnalysisStore } from "@/store/analysisStore";
 import type { Function, ListingRow } from "@/types";
 
@@ -23,13 +26,21 @@ const ROW_H = 18;
  * as the view scrolls, so a multi-megabyte image is never held in the browser
  * at once.
  *
+ * The selection is owned by the panel and handed down: the view reports what a
+ * gesture produced, along with the excerpt it spells, and renders the highlight
+ * the panel hands back. That keeps a drag's re-render to the rows that entered
+ * or left the range instead of the whole listing.
+ *
  * @param props.scrollRef - The scroll container this listing virtualizes within.
  * @param props.binaryPath - Resets the cached rows when the target changes.
- * @param props.selectedAddr - The selected row's address, for highlighting.
+ * @param props.selectedAddr - The selected row's address, highlighted until a
+ *   selection replaces it.
  * @param props.focusAddr - An address to scroll to when it changes (a function
  *   chosen elsewhere, e.g. the function list).
  * @param props.onGoTo - Called when a function row is activated.
- * @param props.onSelectAddress - Called with a row's address when it is clicked.
+ * @param props.selection - The current native selection.
+ * @param props.onSelect - Called with a new selection and its context excerpt.
+ * @param props.onAddToContext - Called to add the selection to the agent.
  * @returns The listing surface.
  */
 export function ListingView({
@@ -38,14 +49,18 @@ export function ListingView({
 	selectedAddr,
 	focusAddr,
 	onGoTo,
-	onSelectAddress,
+	selection,
+	onSelect,
+	onAddToContext,
 }: {
 	scrollRef: RefObject<HTMLDivElement | null>;
 	binaryPath?: string;
 	selectedAddr?: number | null;
 	focusAddr?: number | null;
 	onGoTo?: (f: Function) => void;
-	onSelectAddress?: (addr: number) => void;
+	selection: Selection;
+	onSelect: (next: Selection, context: BuiltContext | null) => void;
+	onAddToContext?: (context: BuiltContext) => void;
 }) {
 	const funcs = useAnalysisStore((s) => s.funcs);
 	const funcByAddr = useMemo(() => {
@@ -68,6 +83,20 @@ export function ListingView({
 	// centred headers get clipped at the edge.
 	const [contentWidth, setContentWidth] = useState(0);
 	const maxWidthRef = useRef(0);
+
+	// Every selection gesture — click, drag, arrows, the context menu — is
+	// resolved here and reported up; the view only renders what comes back.
+	const { selectedSet, containerProps, menu, closeMenu } =
+		useListingSelection({
+			selection,
+			chunks,
+			funcByAddr,
+			total,
+			chunkSize: CHUNK,
+			focusRef: listRef,
+			onSelect,
+			onAddToContext,
+		});
 
 	// A new target is a new address space; drop every cached row, the width, and
 	// the headers derived from the old one's instructions — an address means a
@@ -201,59 +230,58 @@ export function ListingView({
 	}
 
 	return (
-		<div
-			ref={setListRef}
-			className="relative"
-			style={{
-				// The height is owned by `containerRef`, which writes it without
-				// a render; setting it here too would fight that write.
-				// At least the viewport, and wider only when a row is. Sized to
-				// the content alone, a listing whose rows are all narrow stops
-				// short of the panel's edge: the selected-row band and the
-				// centred FUNCTION banner would end at the content, leaving a
-				// dead margin a selected instruction does not span.
-				width: contentWidth ? `${contentWidth}px` : undefined,
-				minWidth: "100%",
-			}}
-		>
-			{items.map((item) => {
-				const chunk = chunks.get(Math.floor(item.index / CHUNK));
-				const row = chunk?.[item.index % CHUNK];
-				return (
-					<div
-						key={item.index}
-						data-index={item.index}
-						ref={measureRow}
-						style={{
-							position: "absolute",
-							insetBlockStart: 0,
-							insetInlineStart: 0,
-							width: "100%",
-							// No `transform`: `directDomUpdates` writes each row's
-							// position itself, and an inline transform here would
-							// be overwritten on the next render.
-						}}
-					>
-						{row ? (
-							<ListingRowView
-								row={row}
-								func={
-									row.kind === "code"
-										? (funcByAddr.get(row.addr) ?? null)
-										: null
-								}
-								active={row.addr === selectedAddr}
-								onGoTo={onGoTo}
-								onSelect={onSelectAddress}
-							/>
-						) : (
-							<div className="data-row text-muted-foreground pl-3 font-mono">
-								…
-							</div>
-						)}
-					</div>
-				);
-			})}
-		</div>
+		<>
+			<div
+				ref={setListRef}
+				tabIndex={0}
+				className="relative outline-none"
+				{...containerProps}
+				style={{
+					// The height is owned by `containerRef`, which writes it without
+					// a render; setting it here too would fight that write.
+					// At least the viewport, and wider only when a row is. Sized to
+					// the content alone, a listing whose rows are all narrow stops
+					// short of the panel's edge: the selected-row band and the
+					// centred FUNCTION banner would end at the content, leaving a
+					// dead margin a selected instruction does not span.
+					width: contentWidth ? `${contentWidth}px` : undefined,
+					minWidth: "100%",
+				}}
+			>
+				{items.map((item) => {
+					const row = chunks.get(Math.floor(item.index / CHUNK))?.[
+						item.index % CHUNK
+					];
+					// Until the analyst selects something, the row the app chose
+					// elsewhere (a function's entry) stays highlighted.
+					const fallback =
+						selectedSet.size === 0 && row?.addr === selectedAddr;
+					return (
+						<ListingRowSlot
+							key={item.index}
+							index={item.index}
+							row={row}
+							func={
+								row?.kind === "code"
+									? (funcByAddr.get(row.addr) ?? null)
+									: null
+							}
+							selected={fallback || selectedSet.has(item.index)}
+							cursor={fallback || selection.anchor === item.index}
+							measure={measureRow}
+							onGoTo={onGoTo}
+						/>
+					);
+				})}
+			</div>
+			{menu && (
+				<ListingContextMenu
+					x={menu.x}
+					y={menu.y}
+					actions={menu.actions}
+					onClose={closeMenu}
+				/>
+			)}
+		</>
 	);
 }

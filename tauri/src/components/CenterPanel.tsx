@@ -23,6 +23,12 @@ import { cn } from "@/lib/utils";
 import { ListingView } from "@/components/ListingView";
 import { MENU } from "@/lib/commands";
 import { disasmMenuSections } from "@/lib/disasmMenu";
+import {
+	buildFunctionContext,
+	EMPTY_SELECTION,
+	type BuiltContext,
+	type Selection,
+} from "@/lib/listingSelection";
 import { clearSections, publishSections } from "@/lib/menuRegistry";
 import { api } from "@/api";
 import { useAnalysisStore } from "@/store/analysisStore";
@@ -259,27 +265,60 @@ export function CenterPanel() {
 	const [importQuery, setImportQuery] = useState("");
 	const [viewOptions, setViewOptions] =
 		useState<DisasmViewOptions>(readDisasmView);
-	const [insnSelection, setInsnSelection] = useState<{
-		address: number;
-		instruction: number | null;
-	}>({ address: selectedAddr ?? 0, instruction: selectedAddr ?? null });
-	const activeInsn =
-		insnSelection.address === selectedAddr
-			? insnSelection.instruction
-			: (selectedAddr ?? null);
-
-	// Stable across the panel's unrelated re-renders — an analysis tick, a
-	// loading flag — so the listing's memoised rows do not all re-render when
-	// only the panel did.
-	const selectListingRow = useCallback(
-		(address: number) => {
-			setInsnSelection({
-				address: selectedAddr ?? address,
-				instruction: address,
-			});
-		},
-		[selectedAddr],
+	const [listingSelection, setListingSelection] =
+		useState<Selection>(EMPTY_SELECTION);
+	const [listingContext, setListingContext] = useState<BuiltContext | null>(
+		null,
 	);
+
+	// The listing reports both the selection and the excerpt it spells, so the
+	// panel can offer the agent action without knowing the listing's rows.
+	const handleListingSelect = useCallback(
+		(next: Selection, context: BuiltContext | null) => {
+			setListingSelection(next);
+			setListingContext(context);
+		},
+		[],
+	);
+
+	// Add the selection to the agent's context as one item — the function
+	// header and its rows — then clear the highlight so a second click does not
+	// add it twice.
+	const addListingContext = useCallback((context: BuiltContext) => {
+		useContextStore.getState().add({
+			source: "disasm",
+			label: context.label,
+			text: context.text,
+		});
+		setListingSelection(EMPTY_SELECTION);
+		setListingContext(null);
+		useUiStore.getState().setChatOpen(true);
+	}, []);
+
+	// A whole function attached by identity: name, address, signature, size.
+	// Deliberately not its disassembly — that is what selecting its lines is
+	// for, and a body would drown the question it is meant to support.
+	const addFunctionContext = useCallback((func: Function) => {
+		const context = buildFunctionContext(func);
+		useContextStore.getState().add({
+			source: "function",
+			label: context.label,
+			text: context.text,
+		});
+		useUiStore.getState().setChatOpen(true);
+	}, []);
+
+	// A new function or target is a new listing: the old selection's indices
+	// would point at different rows now. Adjusted during render, guarded, so the
+	// reset lands in the same commit as the new listing rather than a frame
+	// later.
+	const listingKey = `${binaryPath ?? ""}\u0000${selectedAddr ?? ""}`;
+	const [selectionKey, setSelectionKey] = useState(listingKey);
+	if (selectionKey !== listingKey) {
+		setSelectionKey(listingKey);
+		setListingSelection(EMPTY_SELECTION);
+		setListingContext(null);
+	}
 
 	const updateViewOption = useCallback(
 		(key: keyof DisasmViewOptions, value: boolean) => {
@@ -543,6 +582,31 @@ export function CenterPanel() {
 							</span>
 						</>
 					)}
+					<div className="ml-auto flex shrink-0 items-center gap-1">
+						{listingContext && (
+							<Button
+								variant="toolbar"
+								size="sm"
+								onClick={() =>
+									addListingContext(listingContext)
+								}
+								title="Add the selected listing lines to the agent's context"
+							>
+								Add {listingContext.count} line
+								{listingContext.count === 1 ? "" : "s"}
+							</Button>
+						)}
+						{selected && (
+							<Button
+								variant="toolbar"
+								size="sm"
+								onClick={() => addFunctionContext(selected)}
+								title="Add this function's name, address and signature to the agent's context"
+							>
+								Add function
+							</Button>
+						)}
+					</div>
 				</div>
 			)}
 			{toolResult && (
@@ -743,10 +807,12 @@ export function CenterPanel() {
 										<ListingView
 											scrollRef={scrollRef}
 											binaryPath={binaryPath}
-											selectedAddr={activeInsn}
+											selectedAddr={selectedAddr}
 											focusAddr={selectedAddr}
 											onGoTo={selectFn}
-											onSelectAddress={selectListingRow}
+											selection={listingSelection}
+											onSelect={handleListingSelect}
+											onAddToContext={addListingContext}
 										/>
 									</div>
 								</>

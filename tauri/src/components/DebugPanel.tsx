@@ -8,7 +8,7 @@ import {
 	type ReactNode,
 } from "react";
 
-import { api, pickBinary } from "@/api";
+import { api } from "@/api";
 import { DebugCpu } from "@/components/DebugCpu";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,6 +17,7 @@ import { DebuggerVariableList } from "@/components/VariableList";
 import { chrome } from "@/lib/chrome";
 import { cn } from "@/lib/utils";
 import { useAnalysisStore } from "@/store/analysisStore";
+import { useBinaryStore } from "@/store/binaryStore";
 import { isLastStopView, isLiveState, useDebugStore } from "@/store/debugStore";
 import type { DebugStopReason } from "@/types";
 
@@ -535,6 +536,9 @@ export function DebugPanel() {
 	const connect = useDebugStore((s) => s.connect);
 	const disconnect = useDebugStore((s) => s.disconnect);
 	const setFollow = useDebugStore((s) => s.setFollow);
+	// The debuggee is the binary already open for analysis: the panel only
+	// exists once one is loaded.
+	const binaryPath = useBinaryStore((s) => s.binary?.path);
 	const [attachPid, setAttachPid] = useState("");
 	const [breakAt, setBreakAt] = useState("");
 	const [stdin, setStdin] = useState("");
@@ -585,9 +589,19 @@ export function DebugPanel() {
 		};
 	}, [onOutputScroll]);
 
+	/**
+	 * Start the loaded binary under the debugger.
+	 *
+	 * The target is the one open for analysis, so asking for a path again would
+	 * make the analyst pick the file they already have open — and could leave
+	 * the debugger watching a process other than the one on screen.
+	 *
+	 * @example
+	 * // With /bin/cat opened, Launch runs /bin/cat, not a fresh file picker.
+	 * await onLaunch();
+	 */
 	const onLaunch = async () => {
-		const path = await pickBinary();
-		if (path) await run("launch", { path });
+		if (binaryPath) await run("launch", { path: binaryPath });
 	};
 
 	const onAttach = async () => {
@@ -616,10 +630,12 @@ export function DebugPanel() {
 					variant="toolbar"
 					size="sm"
 					onClick={onLaunch}
-					disabled={busy}
+					disabled={busy || !binaryPath}
+					title="Launch the analyzed binary"
 				>
 					Launch
 				</Button>
+				<div className="ui-sep" />
 				<div className="flex items-center gap-1">
 					<Input
 						value={attachPid}

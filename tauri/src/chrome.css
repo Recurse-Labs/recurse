@@ -251,15 +251,26 @@ body.dragging-suppress-select-row {
 	background: var(--border);
 }
 
+/* One menu's name in that row, or the way out of the project.
+ *
+ * The row is a control tall, not a bar tall: the item is inset by a couple of
+ * pixels so its hover fill and focus ring sit *inside* the bar instead of
+ * painting over the border it shares with the toolbar below. Without the inset
+ * the ring's vertical sides run the full height of the bar and read as two blue
+ * rules between the menu names.
+ */
 .ui-menu-item {
 	display: flex;
 	align-items: center;
+	align-self: center;
 	gap: var(--space-1);
+	height: calc(var(--control-h) - var(--space-1));
 	padding-inline: var(--space-2);
 	font-size: var(--text-xs);
 	color: var(--muted-foreground);
 	background: transparent;
 	border: 0;
+	border-radius: var(--radius-control);
 	cursor: default;
 }
 
@@ -267,6 +278,13 @@ body.dragging-suppress-select-row {
 .ui-menu-item[data-state="open"] {
 	color: var(--foreground);
 	background: color-mix(in srgb, var(--foreground) 8%, transparent);
+}
+
+/* Inset, so the ring is a boundary around the word and not a line through the
+   bar's own boundary. */
+.ui-menu-item:focus-visible {
+	outline: 1px solid var(--ring);
+	outline-offset: -2px;
 }
 
 .ui-sep {

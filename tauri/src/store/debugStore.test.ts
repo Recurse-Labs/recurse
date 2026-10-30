@@ -464,6 +464,72 @@ describe("failed ops", () => {
 	});
 });
 
+describe("runTo", () => {
+	it("leaves a temporary breakpoint only for the duration of the run", async () => {
+		let bps: { id: number; addr: number; enabled: boolean }[] = [];
+		mocked.debugCommand.mockImplementation(async (op: string) => {
+			if (op === "backtrace") return [];
+			if (op === "breakpoints") return bps;
+			if (op === "break") {
+				bps = [{ id: 9, addr: 0x401000, enabled: true }];
+				return bps[0];
+			}
+			if (op === "unbreak") {
+				bps = [];
+				return {};
+			}
+			return stopAt(0x401000);
+		});
+		await useDebugStore.getState().run("launch", { path: "/bin/true" });
+		await useDebugStore.getState().runTo(0x401000);
+		expect(mocked.debugCommand).toHaveBeenCalledWith("break", {
+			addr: 0x401000,
+		});
+		expect(mocked.debugCommand).toHaveBeenCalledWith("continue", undefined);
+		expect(mocked.debugCommand).toHaveBeenCalledWith("unbreak", { id: 9 });
+		expect(useDebugStore.getState().breakpoints).toEqual([]);
+	});
+
+	it("keeps a breakpoint the analyst already set", async () => {
+		mocked.debugCommand.mockImplementation(async (op: string) => {
+			if (op === "backtrace") return [];
+			if (op === "breakpoints")
+				return [{ id: 3, addr: 0x401000, enabled: true }];
+			return stopAt(0x401000);
+		});
+		await useDebugStore.getState().run("launch", { path: "/bin/true" });
+		await useDebugStore.getState().runTo(0x401000);
+		expect(mocked.debugCommand).not.toHaveBeenCalledWith(
+			"break",
+			expect.anything(),
+		);
+		expect(mocked.debugCommand).not.toHaveBeenCalledWith(
+			"unbreak",
+			expect.anything(),
+		);
+	});
+
+	it("resolves when the target exits before the temporary breakpoint is hit", async () => {
+		let dead = false;
+		mocked.debugCommand.mockImplementation(async (op: string) => {
+			if (op === "backtrace") return [];
+			if (op === "breakpoints")
+				return dead ? [] : [{ id: 4, addr: 0x401000, enabled: true }];
+			if (op === "unbreak" && dead)
+				throw new Error("no debuggee is running");
+			if (op === "continue") {
+				dead = true;
+				return exitedStop(0);
+			}
+			return stopAt(0x401000);
+		});
+		await useDebugStore.getState().run("launch", { path: "/bin/true" });
+		await expect(
+			useDebugStore.getState().runTo(0x401000),
+		).resolves.toBeUndefined();
+	});
+});
+
 describe("isLiveState", () => {
 	it("is true only for a process that can still be stepped", () => {
 		expect(isLiveState("stopped")).toBe(true);

@@ -21,6 +21,7 @@ import { useLlmStore } from "@/store/llmStore";
 import { useAgentStore, type UiBlock } from "@/store/agentStore";
 import { useContextStore } from "@/store/contextStore";
 import { useSessionStore } from "@/store/sessionStore";
+import type { ContextItem } from "@/types";
 
 function fmtDate(secs: number): string {
 	const d = new Date(secs * 1000);
@@ -276,6 +277,7 @@ export function AgentChat({ inputRef }: Props) {
 									<UserMessage
 										blocks={m.blocks}
 										contextRefs={m.contextRefs}
+										contextItems={m.contextItems}
 									/>
 								) : (
 									<AssistantMessage
@@ -387,15 +389,19 @@ function ReasoningBlock({ text }: { text: string }) {
  * comparison is free.
  *
  * @param props.blocks - The turn's blocks; only its content is shown.
- * @param props.contextRefs - Addresses or symbols attached to the question.
+ * @param props.contextRefs - Labels of the context attached to the question.
+ * @param props.contextItems - The attached context, shown as collapsible
+ *   excerpts under the question.
  * @returns The rendered question.
  */
 const UserMessage = memo(function UserMessage({
 	blocks,
 	contextRefs,
+	contextItems,
 }: {
 	blocks: UiBlock[];
 	contextRefs?: string[];
+	contextItems?: ContextItem[];
 }) {
 	return (
 		<div className="chat-turn flex justify-end">
@@ -404,17 +410,36 @@ const UserMessage = memo(function UserMessage({
 					.filter((b) => b.kind === "content")
 					.map((b) => (b.kind === "content" ? b.text : ""))
 					.join("")}
-				{contextRefs && contextRefs.length > 0 && (
-					<div className="mt-1.5 flex flex-wrap gap-1">
-						{contextRefs.map((ref, i) => (
-							<span
-								key={i}
-								className="bg-foreground/10 text-2xs rounded px-1 py-px font-mono"
+				{contextItems && contextItems.length > 0 ? (
+					<div className="mt-1.5 space-y-1">
+						{contextItems.map((c) => (
+							<details
+								key={c.id}
+								className="bg-foreground/5 overflow-hidden rounded"
 							>
-								{ref}
-							</span>
+								<summary className="text-muted-foreground text-2xs cursor-pointer px-1.5 py-1 font-mono select-none">
+									{c.source} · {c.label}
+								</summary>
+								<pre className="scroll-host max-h-56 overflow-auto px-2 pb-1.5 font-mono text-[10px] leading-snug whitespace-pre">
+									{c.text}
+								</pre>
+							</details>
 						))}
 					</div>
+				) : (
+					contextRefs &&
+					contextRefs.length > 0 && (
+						<div className="mt-1.5 flex flex-wrap gap-1">
+							{contextRefs.map((ref, i) => (
+								<span
+									key={i}
+									className="bg-foreground/10 text-2xs rounded px-1 py-px font-mono"
+								>
+									{ref}
+								</span>
+							))}
+						</div>
+					)
 				)}
 			</div>
 		</div>

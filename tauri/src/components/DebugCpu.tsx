@@ -18,6 +18,7 @@ import {
 import { cn } from "@/lib/utils";
 import { callTarget, ripTarget, shortName } from "@/lib/debugCalls";
 import { VarNameChip } from "@/components/VarNameChip";
+import { useDebugCpuMenu } from "@/components/DebugCpuMenu";
 import { isLastStopView, isLiveState, useDebugStore } from "@/store/debugStore";
 import { useAnalysisStore } from "@/store/analysisStore";
 import type { DebugInsn } from "@/types";
@@ -66,6 +67,7 @@ export function DebugCpu() {
 	const ensureDisasm = useDebugStore((s) => s.ensureDisasm);
 	const context = useSettingsStore((s) => s.debugContext);
 	const pcRow = useRef<HTMLTableRowElement | null>(null);
+	const { openMenu, menu, target } = useDebugCpuMenu();
 
 	const bias = useDebugStore((s) => s.bias);
 	const callNames = useDebugStore((s) => s.callNames);
@@ -237,7 +239,10 @@ export function DebugCpu() {
 	}
 
 	return (
-		<div className="scroll-host min-h-0 flex-1 overflow-auto font-mono text-xs">
+		<div
+			data-menu-boundary
+			className="scroll-host min-h-0 flex-1 overflow-auto font-mono text-xs"
+		>
 			{error && (
 				<div className="text-destructive border-destructive/40 border-b px-2 py-1">
 					{error}
@@ -260,22 +265,33 @@ export function DebugCpu() {
 						const atLastStop =
 							live && stale && row.role === "cursor";
 						const hasBp = bpAt.has(row.addr);
+						// The row the context menu is acting on. It is not
+						// necessarily the pc row above: right-clicking another
+						// instruction must visibly move the selection there, or
+						// the menu reads as an action on whatever is blue.
+						const menuTarget = target === row;
 						return (
 							<tr
 								// Positional: a peek repeats addresses the window may
 								// already show, so an address is not a key here.
 								key={i}
 								ref={isPc ? pcRow : undefined}
+								onContextMenu={(event) => openMenu(event, row)}
 								className={cn(
 									"hover:bg-accent/40",
 									row.role === "past" && chrome.past,
 									row.role === "peek" && chrome.peek,
 									isPc && chrome.selected,
 									atLastStop && "opacity-60",
+									menuTarget && !isPc && "bg-accent",
 								)}
 							>
 								<td
-									className="w-4 cursor-pointer px-1 text-center select-none"
+									className={cn(
+										"w-4 cursor-pointer px-1 text-center select-none",
+										menuTarget &&
+											"shadow-[inset_2px_0_0_var(--brand)]",
+									)}
 									onClick={() => toggle(row.addr)}
 									title="Toggle breakpoint"
 								>
@@ -362,6 +378,7 @@ export function DebugCpu() {
 								: "no disassembly"}
 				</div>
 			)}
+			{menu}
 		</div>
 	);
 }

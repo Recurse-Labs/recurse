@@ -30,6 +30,26 @@ export function fmtAddr(addr: number): string {
 	return `0x${addr.toString(16).padStart(8, "0")}`;
 }
 
+/** Width of the listing's byte column, in characters. */
+export const BYTES_COLUMN = 26;
+
+/**
+ * Group a packed hex byte string into space-separated pairs, the way the
+ * listing shows instruction and data bytes: `0f4c3b` becomes `0f 4c 3b`.
+ *
+ * @param hex - The packed hex string, or null when a row has no bytes.
+ * @returns The bytes separated by single spaces, or `""` when there are none.
+ *
+ * @example
+ * groupBytes("0f4c3b") // => "0f 4c 3b"
+ * groupBytes("55")     // => "55"
+ * groupBytes(null)     // => ""
+ */
+export function groupBytes(hex?: string | null): string {
+	if (!hex) return "";
+	return hex.match(/.{1,2}/g)?.join(" ") ?? "";
+}
+
 /**
  * The key a function's return value is annotated under.
  *

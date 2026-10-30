@@ -27,6 +27,9 @@ export interface UiMessage {
 	pending: boolean;
 	error?: string;
 	contextRefs?: string[];
+	/** The context attached to this turn, kept whole so the bubble can show
+	 * the excerpt the model was given rather than only its label. */
+	contextItems?: ContextItem[];
 }
 
 interface AgentState {
@@ -324,6 +327,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 					blocks: userBlocks(text),
 					pending: false,
 					contextRefs: refs,
+					contextItems: context ?? [],
 				},
 				{
 					id: crypto.randomUUID(),

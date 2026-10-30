@@ -242,6 +242,11 @@ interface DebugState {
 	refreshSnapshot: () => Promise<void>;
 	setFollow: (b: boolean) => void;
 	launch: (path: string) => Promise<void>;
+	/**
+	 * Continue until `addr` is reached, then remove the breakpoint that got it
+	 * there unless the analyst had already set one there.
+	 */
+	runTo: (addr: number) => Promise<void>;
 	attach: (pid: number) => Promise<void>;
 	detach: () => Promise<void>;
 	kill: () => Promise<void>;
@@ -641,6 +646,41 @@ export const useDebugStore = create<DebugState>((set, get) => ({
 
 	launch: async (path) => {
 		await get().run("launch", { path });
+	},
+
+	/**
+	 * Continue until `addr` is reached.
+	 *
+	 * Implemented as a temporary breakpoint: unless the analyst already had one
+	 * at `addr`, it is added for this run and removed once the target stops
+	 * again. Selecting "Run to here" therefore does not quietly leave a
+	 * breakpoint behind. If the process stops somewhere else first — a signal or
+	 * another breakpoint — the temporary one is still cleaned up.
+	 *
+	 * @param addr - The runtime address to run to.
+	 *
+	 * @example
+	 * // Continue until the instruction at 0x401000 is next reached.
+	 * await useDebugStore.getState().runTo(0x401000);
+	 */
+	runTo: async (addr) => {
+		const existing = get().breakpoints.find((b) => b.addr === addr);
+		if (!existing) await get().run("break", { addr });
+		try {
+			await get().run("continue");
+		} finally {
+			if (!existing) {
+				const added = get().breakpoints.find((b) => b.addr === addr);
+				if (added) {
+					try {
+						await get().run("unbreak", { id: added.id });
+					} catch {
+						// The target can exit while running to it, leaving no
+						// session in which to remove the breakpoint.
+					}
+				}
+			}
+		}
 	},
 
 	ensureDisasm: async (pc) => {

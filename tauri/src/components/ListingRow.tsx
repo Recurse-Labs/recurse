@@ -2,25 +2,9 @@ import { memo } from "react";
 
 import { FunctionHeader } from "@/components/FunctionHeader";
 import { DisasmComment, DisasmInstr, splitComment } from "@/lib/disasm";
-import { fmtAddr } from "@/lib/listingFormat";
+import { fmtAddr, groupBytes } from "@/lib/listingFormat";
 import { cn } from "@/lib/utils";
 import type { Function, ListingRow } from "@/types";
-
-/**
- * Group a hex byte string into space-separated pairs, the way Ghidra shows
- * instruction and data bytes: `0f4c3b` becomes `0f 4c 3b`.
- *
- * @param hex - The packed hex string, or null.
- * @returns The bytes separated by single spaces.
- *
- * @example
- * groupBytes("0f4c3b") // => "0f 4c 3b"
- * groupBytes(null)     // => ""
- */
-function groupBytes(hex?: string | null): string {
-	if (!hex) return "";
-	return hex.match(/.{1,2}/g)?.join(" ") ?? "";
-}
 
 /**
  * One row of the listing: a section header, a disassembled instruction, or a
@@ -33,25 +17,29 @@ function groupBytes(hex?: string | null): string {
  * measured size disagree with the estimate, and each disagreement shifts every
  * row below the measured one while the analyst is scrolling.
  *
+ * The row does not handle its own clicks: the listing delegates them from the
+ * scroll surface, so a row stays a pure function of its props and a drag that
+ * crosses a hundred of them re-renders none.
+ *
  * @param props.row - The row to render.
  * @param props.func - Name of the function starting at this row, if any.
- * @param props.active - Whether this row's address is selected.
+ * @param props.selected - Whether this row is part of the selection.
+ * @param props.cursor - Whether this row is the selection's caret.
  * @param props.onGoTo - Called when a named function row is activated.
- * @param props.onSelect - Called with the row's address when it is clicked.
  * @returns The row element.
  */
 export const ListingRowView = memo(function ListingRowView({
 	row,
 	func,
-	active,
+	selected,
+	cursor,
 	onGoTo,
-	onSelect,
 }: {
 	row: ListingRow;
 	func?: Function | null;
-	active: boolean;
+	selected: boolean;
+	cursor: boolean;
 	onGoTo?: (f: Function) => void;
-	onSelect?: (addr: number) => void;
 }) {
 	if (row.kind === "header") {
 		return (
@@ -76,10 +64,10 @@ export const ListingRowView = memo(function ListingRowView({
 			<div
 				className={cn(
 					"flex h-[18px] min-w-max items-center gap-3 py-px pl-3 font-mono whitespace-nowrap",
-					active && "ui-selected border-brand border-l-2 pl-[10px]",
+					selected && "ui-selected",
+					cursor && "border-brand border-l-2 pl-[10px]",
 					"hover:bg-accent/70 cursor-pointer",
 				)}
-				onClick={() => onSelect?.(row.addr)}
 				title={
 					row.kind === "code" ? "Select instruction" : "Select data"
 				}
@@ -111,3 +99,69 @@ export const ListingRowView = memo(function ListingRowView({
 		</>
 	);
 });
+
+/**
+ * One virtualized slot of the listing: the absolutely positioned box the
+ * virtualizer moves, holding either a loaded row or a placeholder for one whose
+ * chunk has not arrived.
+ *
+ * The slot carries `data-index`, which is how the listing's delegated click,
+ * drag and context-menu handlers find the row a pointer is over without a
+ * handler on every row.
+ *
+ * @param props.index - The row's position in the whole listing.
+ * @param props.row - The row, once its chunk has loaded.
+ * @param props.func - The function starting at this row, if any.
+ * @param props.selected - Whether the row is part of the selection.
+ * @param props.cursor - Whether the row is the selection's caret.
+ * @param props.measure - The virtualizer's element-measuring ref.
+ * @param props.onGoTo - Called when a named function row is activated.
+ * @returns The positioned slot.
+ */
+export function ListingRowSlot({
+	index,
+	row,
+	func,
+	selected,
+	cursor,
+	measure,
+	onGoTo,
+}: {
+	index: number;
+	row?: ListingRow;
+	func?: Function | null;
+	selected: boolean;
+	cursor: boolean;
+	measure: (node: HTMLDivElement | null) => void;
+	onGoTo?: (f: Function) => void;
+}) {
+	return (
+		<div
+			data-index={index}
+			ref={measure}
+			style={{
+				position: "absolute",
+				insetBlockStart: 0,
+				insetInlineStart: 0,
+				width: "100%",
+				// No `transform`: `directDomUpdates` writes each row's position
+				// itself, and an inline transform here would be overwritten on
+				// the next render.
+			}}
+		>
+			{row ? (
+				<ListingRowView
+					row={row}
+					func={func}
+					selected={selected}
+					cursor={cursor}
+					onGoTo={onGoTo}
+				/>
+			) : (
+				<div className="data-row text-muted-foreground pl-3 font-mono">
+					…
+				</div>
+			)}
+		</div>
+	);
+}

@@ -5,9 +5,12 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { Pane } from "@/components/Pane";
 import { Input } from "@/components/ui/input";
 import { chrome } from "@/lib/chrome";
+import { buildFunctionContext } from "@/lib/listingSelection";
 import { cn } from "@/lib/utils";
 import { useAnalysisStore } from "@/store/analysisStore";
 import { useBinaryStore } from "@/store/binaryStore";
+import { useContextStore } from "@/store/contextStore";
+import { useUiStore } from "@/store/uiStore";
 import type { Function } from "@/types";
 
 /**
@@ -212,6 +215,18 @@ export function FunctionList() {
 		[selectFn],
 	);
 
+	// The function goes to the agent by identity — name, address, signature,
+	// size — not by its disassembly.
+	const addToContext = useCallback((f: Function) => {
+		const context = buildFunctionContext(f);
+		useContextStore.getState().add({
+			source: "function",
+			label: context.label,
+			text: context.text,
+		});
+		useUiStore.getState().setChatOpen(true);
+	}, []);
+
 	const onStartRename = useCallback((addr: number, current: string) => {
 		setDraft(current);
 		setRenaming(addr);
@@ -381,7 +396,7 @@ export function FunctionList() {
 					className="border-border bg-card fixed z-50 min-w-44 rounded-md border p-1 shadow-xl"
 					style={{
 						left: Math.min(contextMenu.x, window.innerWidth - 190),
-						top: Math.min(contextMenu.y, window.innerHeight - 110),
+						top: Math.min(contextMenu.y, window.innerHeight - 140),
 					}}
 					onClick={(event) => event.stopPropagation()}
 				>
@@ -394,6 +409,16 @@ export function FunctionList() {
 						}}
 					>
 						Open in new tab
+					</button>
+					<button
+						type="button"
+						className="hover:bg-accent flex w-full items-center rounded-sm px-2.5 py-1.5 text-left text-xs"
+						onClick={() => {
+							addToContext(contextMenu.function);
+							setContextMenu(null);
+						}}
+					>
+						Add to context
 					</button>
 					<button
 						type="button"
